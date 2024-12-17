@@ -5,11 +5,16 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
+from langchain import PydanticParser
 from openai import OpenAI
+import yaml
 
+from utils.utils import parse_json, parse_text_find_number, parse_text_find_confidence
 from utils_clip import frame_retrieval_seg_ego
 from utils_general import get_from_cache, save_to_cache
+from .models import AnswerFormat, ConfidenceFormat
 
+# Configure logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 file_handler = logging.FileHandler("egoschema_subset.log")
@@ -19,59 +24,20 @@ formatter = logging.Formatter(
 file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 
+# Load configuration from YAML file
+with open('config.yaml', 'r') as config_file:
+    config = yaml.safe_load(config_file)
 
+# Initialize OpenAI client
 client = OpenAI()
 
-
-def parse_json(text):
-    try:
-        # First, try to directly parse the text as JSON
-        return json.loads(text)
-    except json.JSONDecodeError:
-        # If direct parsing fails, use regex to extract JSON
-        json_pattern = r"\{.*?\}|\[.*?\]"  # Pattern for JSON objects and arrays
-
-        matches = re.findall(json_pattern, text, re.DOTALL)
-        for match in matches:
-            try:
-                match = match.replace("'", '"')
-                return json.loads(match)
-            except json.JSONDecodeError:
-                continue
-
-        # If no JSON structure is found
-        print("No valid JSON found in the text.")
-        return None
-
-
-def parse_text_find_number(text):
-    item = parse_json(text)
-    try:
-        match = int(item["final_answer"])
-        if match in range(-1, 5):
-            return match
-        else:
-            return random.randint(0, 4)
-    except Exception as e:
-        logger.error(f"Answer Parsing Error: {e}")
-        return -1
-
-
-def parse_text_find_confidence(text):
-    item = parse_json(text)
-    try:
-        match = int(item["confidence"])
-        if match in range(1, 4):
-            return match
-        else:
-            return random.randint(1, 3)
-    except Exception as e:
-        logger.error(f"Confidence Parsing Error: {e}")
-        return 1
+# Initialize Pydantic parsers for response validation
+answer_parser = PydanticParser(model=AnswerFormat)
+confidence_parser = PydanticParser(model=ConfidenceFormat)
 
 
 def get_llm_response(
-    system_prompt, prompt, json_format=True, model="gpt-4-1106-preview"
+    system_prompt, prompt, json_format=True, model=config["model"]
 ):
     messages = [
         {
@@ -114,110 +80,38 @@ def get_llm_response(
 
 
 def generate_final_answer(question, caption, num_frames):
-    answer_format = {"final_answer": "xxx"}
-    prompt = f"""
-    Given a video that has {num_frames} frames, the frames are decoded at 1 fps. Given the following descriptions of the sampled frames in the video:
-    {caption}
-    #C to denote the sentence is an action done by the camera wearer (the person who recorded the video while wearing a camera on their head).
-    #O to denote that the sentence is an action done by someone other than the camera wearer.
-    Please answer the following question: 
-    ``` 
-    {question}
-    ``` 
-    Please think carefully and write the best answer index in Json format {answer_format}. Note that only one answer is returned for the question, and you must select one answer index from the candidates.
-    """
-    system_prompt = "You are a helpful assistant designed to output JSON."
+    prompt = config['prompts']['final_answer'].format(num_frames=num_frames, caption=caption, question=question, AnswerFormat=AnswerFormat.schema_json())
+    system_prompt = config['system_prompt']
     response = get_llm_response(system_prompt, prompt, json_format=True)
-    return response
+    parsed_response = answer_parser.parse(response)
+    return parsed_response
 
 
 def generate_description_step(question, caption, num_frames, segment_des):
-    formatted_description = {
-        "frame_descriptions": [
-            {"segment_id": "1", "duration": "xxx - xxx", "description": "frame of xxx"},
-            {"segment_id": "2", "duration": "xxx - xxx", "description": "frame of xxx"},
-            {"segment_id": "3", "duration": "xxx - xxx", "description": "frame of xxx"},
-        ]
-    }
-    prompt = f"""
-    Given a video that has {num_frames} frames, the frames are decoded at 1 fps. Given the following descriptions of sampled frames in the video:
-    {caption}
-    #C to denote the sentence is an action done by the camera wearer (the person who recorded the video while wearing a camera on their head).
-    #O to denote that the sentence is an action done by someone other than the camera wearer.
-    To answer the following question: 
-    ``` 
-    {question}
-    ``` 
-    However, the information in the initial frames is not suffient.
-    Objective:
-    Our goal is to identify additional frames that contain crucial information necessary for answering the question. These frames should not only address the query directly but should also complement the insights gleaned from the descriptions of the initial frames.
-    To achieve this, we will:
-    1. Divide the video into segments based on the intervals between the initial frames as, candiate segments: {segment_des}
-    2. Determine which segments are likely to contain frames that are most relevant to the question. These frames should capture key visual elements, such as objects, humans, interactions, actions, and scenes, that are supportive to answer the question.
-    For each frame identified as potentially relevant, provide a concise description focusing on essential visual elements. Use a single sentence per frame. If the specifics of a segment's visual content are uncertain based on the current information, use placeholders for specific actions or objects, but ensure the description still conveys the segment's relevance to the query.
-    Select multiple frames from one segment if necessary to gather comprehensive insights. 
-    Return the descriptions and the segment id in JSON format, note "segment_id" must be smaller than {len(segment_des) + 1}, "duration" should be the same as candiate segments:
-    ```
-    {formatted_description}
-    ```
-    """
-    system_prompt = "You are a helpful assistant designed to output JSON."
+    prompt = config['prompts']['description_step'].format(num_frames=num_frames, caption=caption, question=question, segment_des=segment_des)
+    system_prompt = config['system_prompt']
     response = get_llm_response(system_prompt, prompt, json_format=True)
     return response
 
 
 def self_eval(previous_prompt, answer):
-    confidence_format = {"confidence": "xxx"}
-    prompt = f"""Please assess the confidence level in the decision-making process.
-    The provided information is as as follows,
-    {previous_prompt}
-    The decision making process is as follows,
-    {answer}
-    Criteria for Evaluation:
-    Insufficient Information (Confidence Level: 1): If information is too lacking for a reasonable conclusion.
-    Partial Information (Confidence Level: 2): If information partially supports an informed guess.
-    Sufficient Information (Confidence Level: 3): If information fully supports a well-informed decision.
-    Assessment Focus:
-    Evaluate based on the relevance, completeness, and clarity of the provided information in relation to the decision-making context.
-    Please generate the confidence with JSON format {confidence_format}
-    """
-    system_prompt = "You are a helpful assistant designed to output JSON."
+    prompt = config['prompts']['self_eval'].format(previous_prompt=previous_prompt, answer=answer, ConfidenceFormat=ConfidenceFormat.schema_json())
+    system_prompt = config['system_prompt']
     response = get_llm_response(system_prompt, prompt, json_format=True)
-    return response
+    parsed_response = confidence_parser.parse(response)
+    return parsed_response
 
 
 def ask_gpt_caption(question, caption, num_frames):
-    answer_format = {"final_answer": "xxx"}
-    prompt = f"""
-    Given a video that has {num_frames} frames, the frames are decoded at 1 fps. Given the following descriptions of five uniformly sampled frames in the video:
-    {caption}
-    #C to denote the sentence is an action done by the camera wearer (the person who recorded the video while wearing a camera on their head).
-    #O to denote that the sentence is an action done by someone other than the camera wearer.
-    Please answer the following question: 
-    ``` 
-    {question}
-    ``` 
-    Please think step-by-step and write the best answer index in Json format {answer_format}. Note that only one answer is returned for the question.
-    """
-    system_prompt = "You are a helpful assistant."
+    prompt = config['prompts']['ask_gpt_caption'].format(num_frames=num_frames, caption=caption, question=question, AnswerFormat=AnswerFormat.schema_json())
+    system_prompt = config['system_prompt']
     response = get_llm_response(system_prompt, prompt, json_format=False)
     return prompt, response
 
 
 def ask_gpt_caption_step(question, caption, num_frames):
-    answer_format = {"final_answer": "xxx"}
-    prompt = f"""
-    Given a video that has {num_frames} frames, the frames are decoded at 1 fps. Given the following descriptions of the sampled frames in the video:
-    {caption}
-    #C to denote the sentence is an action done by the camera wearer (the person who recorded the video while wearing a camera on their head).
-    #O to denote that the sentence is an action done by someone other than the camera wearer.
-    Please answer the following question: 
-    ``` 
-    {question}
-    ``` 
-    Please think step-by-step and write the best answer index in Json format {answer_format}. Note that only one answer is returned for the question.
-    """
-    system_prompt = "You are a helpful assistant."
+    prompt = config['prompts']['ask_gpt_caption_step'].format(num_frames=num_frames, caption=caption, question=question, AnswerFormat=AnswerFormat.schema_json())
+    system_prompt = config['system_prompt']
     response = get_llm_response(system_prompt, prompt, json_format=False)
     return prompt, response
 
@@ -248,14 +142,14 @@ def run_one_question(video_id, ann, caps, logs):
     answer = parse_text_find_number(answer_str)
     confidence_str = self_eval(previous_prompt, answer_str)
     confidence = parse_text_find_confidence(confidence_str)
-
+    # segment description
+    segment_des = {
+        i + 1: f"{sample_idx[i]}-{sample_idx[i + 1]}"
+        for i in range(len(sample_idx) - 1)
+    }
     ### Step 2 ###
     if confidence < 3:
         try:
-            segment_des = {
-                i + 1: f"{sample_idx[i]}-{sample_idx[i + 1]}"
-                for i in range(len(sample_idx) - 1)
-            }
             candiate_descriptions = generate_description_step(
                 formatted_question,
                 sampled_caps,
@@ -287,10 +181,6 @@ def run_one_question(video_id, ann, caps, logs):
     ### Step 3 ###
     if confidence < 3:
         try:
-            segment_des = {
-                i + 1: f"{sample_idx[i]}-{sample_idx[i + 1]}"
-                for i in range(len(sample_idx) - 1)
-            }
             candiate_descriptions = generate_description_step(
                 formatted_question,
                 sampled_caps,
