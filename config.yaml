@@ -1,0 +1,50 @@
+# Configuration settings for VideoAgent
+
+# Example of configuration settings
+openai_api_key: "your-api-key-here"
+model: "gpt-4-1106-preview"
+json_format: true
+
+prompts:
+  final_answer: |
+    Given a video that has {num_frames} frames, the frames are decoded at 1 fps. Given the following descriptions of the sampled frames in the video:
+    {caption}
+    ```
+    {question}
+    ```
+    Please think carefully and write the best answer index in Json format {AnswerFormat}. Note that only one answer is returned for the question, and you must select one answer index from the candidates.
+
+  description_step: |
+    Given a video that has {num_frames} frames, the frames are decoded at 1 fps. Given the following descriptions of sampled frames in the video:
+    {caption}
+    ```
+    {question}
+    ```
+    For each frame identified as potentially relevant, provide a concise description focusing on essential visual elements. Use a single sentence per frame. If the specifics of a segment's visual content are uncertain based on the current information, use placeholders for specific actions or objects, but ensure the description still conveys the segment's relevance to the query.
+    Select multiple frames from one segment if necessary to gather comprehensive insights. 
+    Return the descriptions and the segment id in JSON format, note "segment_id" must be smaller than {len(segment_des) + 1}, "duration" should be the same as candiate segments.
+
+  self_eval: |
+    Please assess the confidence level in the decision-making process.
+    The provided information is as follows,
+    {previous_prompt}
+    Sufficient Information (Confidence Level: 3): If information fully supports a well-informed decision.
+    Assessment Focus:
+    Evaluate based on the relevance, completeness, and clarity of the provided information in relation to the decision-making context.
+    Please generate the confidence with JSON format {ConfidenceFormat}.
+
+  gpt_caption: |
+    Given a video that has {num_frames} frames, the frames are decoded at 1 fps. Given the following descriptions of five uniformly sampled frames in the video:
+    {caption}
+    ```
+    {question}
+    ```
+    Please think step-by-step and write the best answer index in Json format {AnswerFormat}. Note that only one answer is returned for the question.
+
+  gpt_caption_step: |
+    Given a video that has {num_frames} frames, the frames are decoded at 1 fps. Given the following descriptions of the sampled frames in the video:
+    {caption}
+    ```
+    {question}
+    ```
+    Please think step-by-step and write the best answer index in Json format {AnswerFormat}. Note that only one answer is returned for the question.
