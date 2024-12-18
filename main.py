@@ -1,247 +1,167 @@
+# main.py
+import os
+import click
+import uuid
+import shutil
 import json
-import logging
-import random
-import re
-from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from datetime import datetime
+from tqdm import tqdm
 
-import numpy as np
-from langchain import PydanticParser
-from openai import OpenAI
-import yaml
+from dotenv import load_dotenv
+load_dotenv()
 
-from utils.utils import parse_json, parse_text_find_number, parse_text_find_confidence
-from utils_clip import frame_retrieval_seg_ego
-from utils_general import get_from_cache, save_to_cache
-from .models import AnswerFormat, ConfidenceFormat
-
-# Configure logging
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-file_handler = logging.FileHandler("egoschema_subset.log")
-formatter = logging.Formatter(
-    "%(asctime)s - %(name)s - %(levelname)s - %(message)s (line %(lineno)d)"
-)
-file_handler.setFormatter(formatter)
-logger.addHandler(file_handler)
-
-# Load configuration from YAML file
-with open('config.yaml', 'r') as config_file:
-    config = yaml.safe_load(config_file)
-
-# Initialize OpenAI client
-client = OpenAI()
-
-# Initialize Pydantic parsers for response validation
-answer_parser = PydanticParser(model=AnswerFormat)
-confidence_parser = PydanticParser(model=ConfidenceFormat)
+from db_utils import init_cache_db, get_cached_embedding, save_embedding_to_cache
+from video_utils import extract_frames
+from utils import load_config
+from embed_utils import cosine_similarity, get_text_embedding_openai, get_frame_description
 
 
-def get_llm_response(
-    system_prompt, prompt, json_format=True, model=config["model"]
-):
-    messages = [
-        {
-            "role": "system",
-            "content": system_prompt,
-        },
-        {"role": "user", "content": prompt},
-    ]
-    key = json.dumps([model, messages])
-    logger.info(messages)
-    cached_value = get_from_cache(key)
-    if cached_value is not None:
-        logger.info("Cache Hit")
-        logger.info(cached_value)
-        return cached_value
+@click.group()
+def cli():
+    pass
 
-    print("Not hit cache", key)
-    input()
+@cli.command("openai-embed")
+@click.option("--video_path", type=str, required=True, help="Path to input video.")
+@click.option("--question", type=str, required=True, multiple=True, help="A list of descriptions or questions.")
+@click.option("--sample_freq", type=int, default=30, help="Sampling frequency (e.g., every nth frame)")
+@click.option("--config_path", type=str, default="config.yaml", help="Path to config YAML.")
+@click.option("--save_top_frame", type=str, default="top_frame.png", help="Path to save the most relevant frame.")
+@click.option("--cache_db_path", type=str, default="embeddings_cache.db", help="Path to SQLite cache database.")
+@click.option("--keep_temp_dir", is_flag=True, default=True, help="Keep the temporary directory with extracted frames.")
+@click.option("--record_top_k_frames", type=int, default=20, help="Number of top frames to record in results.")
+def process_video_openai(
+    video_path, question, sample_freq, config_path, 
+    save_top_frame, cache_db_path, keep_temp_dir,
+    record_top_k_frames
+    ):
 
-    for _ in range(3):
-        try:
-            if json_format:
-                completion = client.chat.completions.create(
-                    model=model,
-                    response_format={"type": "json_object"},
-                    messages=messages,
-                )
-            else:
-                completion = client.chat.completions.create(
-                    model=model, messages=messages
-                )
-            response = completion.choices[0].message.content
-            logger.info(response)
-            save_to_cache(key, response)
-            return response
-        except Exception as e:
-            logger.error(f"GPT Error: {e}")
-            continue
-    return "GPT Error"
+    cfg = load_config(config_path)
+    system_prompt = cfg.get("system_prompt", "You are a helpful assistant.")
+    vision_prompt_template = cfg.get("vision_prompt", "Analyze this image in detail: {image_path} and {description}")
 
+    # Initialize cache DB
+    init_cache_db(cache_db_path)
 
-def generate_final_answer(question, caption, num_frames):
-    prompt = config['prompts']['final_answer'].format(num_frames=num_frames, caption=caption, question=question, AnswerFormat=AnswerFormat.schema_json())
-    system_prompt = config['system_prompt']
-    response = get_llm_response(system_prompt, prompt, json_format=True)
-    parsed_response = answer_parser.parse(response)
-    return parsed_response
+    video_name = Path(video_path).stem
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    result_dir = Path("results") / f"{video_name}_{timestamp}"
+    result_dir.mkdir(parents=True, exist_ok=True)
 
+    temp_dir = f"temp_frames-{video_name}-{uuid.uuid4().hex}"
+    os.makedirs(temp_dir, exist_ok=True)
 
-def generate_description_step(question, caption, num_frames, segment_des):
-    prompt = config['prompts']['description_step'].format(num_frames=num_frames, caption=caption, question=question, segment_des=segment_des)
-    system_prompt = config['system_prompt']
-    response = get_llm_response(system_prompt, prompt, json_format=True)
-    return response
+    try:
+        frames = extract_frames(video_path, sample_freq, temp_dir)
 
+        for q in tqdm(question, desc="Processing questions"):
+            # Get question embedding (OpenAI)
+            question_embedding = get_text_embedding_openai(q)
 
-def self_eval(previous_prompt, answer):
-    prompt = config['prompts']['self_eval'].format(previous_prompt=previous_prompt, answer=answer, ConfidenceFormat=ConfidenceFormat.schema_json())
-    system_prompt = config['system_prompt']
-    response = get_llm_response(system_prompt, prompt, json_format=True)
-    parsed_response = confidence_parser.parse(response)
-    return parsed_response
+            similarities = []
+            for frame_number, fp in tqdm(frames, desc=f"Processing frames for question: {q}"):
+                # Check cache for existing embedding
+                cached_embedding = get_cached_embedding(cache_db_path, video_path, frame_number, q)
+                if cached_embedding is None:
+                    # If not in cache, generate description and then get embedding
+                    frame_description = get_frame_description(system_prompt, vision_prompt_template, fp, q)
+                    frame_embedding = get_text_embedding_openai(frame_description)
+                    # Save to cache
+                    save_embedding_to_cache(cache_db_path, video_path, frame_number, q, frame_embedding)
+                else:
+                    frame_embedding = cached_embedding
 
+                sim = cosine_similarity(question_embedding, frame_embedding)
+                similarities.append((fp, sim))
 
-def ask_gpt_caption(question, caption, num_frames):
-    prompt = config['prompts']['ask_gpt_caption'].format(num_frames=num_frames, caption=caption, question=question, AnswerFormat=AnswerFormat.schema_json())
-    system_prompt = config['system_prompt']
-    response = get_llm_response(system_prompt, prompt, json_format=False)
-    return prompt, response
+            similarities.sort(key=lambda x: x[1], reverse=True)
 
+            # Save top frame and top `record_top_k_frames` results for each question
+            top_frame_path = result_dir / save_top_frame
+            if not top_frame_path.exists():
+                shutil.copy(similarities[0][0], top_frame_path)
 
-def ask_gpt_caption_step(question, caption, num_frames):
-    prompt = config['prompts']['ask_gpt_caption_step'].format(num_frames=num_frames, caption=caption, question=question, AnswerFormat=AnswerFormat.schema_json())
-    system_prompt = config['system_prompt']
-    response = get_llm_response(system_prompt, prompt, json_format=False)
-    return prompt, response
+            top_results = [{"frame_path": f, "similarity": s} for f, s in similarities[:record_top_k_frames]]
+            results_path = result_dir / f"results_{q}.json"
+            with open(results_path, 'w') as f:
+                json.dump({"question": q, "top_results": top_results}, f, indent=2)
 
+            # Print results
+            print(f"Top ranked frames for question '{q}' (path, similarity):")
+            for result in top_results:
+                print(f"{result['frame_path']}: {result['similarity']:.4f}")
 
-def read_caption(captions, sample_idx):
-    video_caption = {}
-    for idx in sample_idx:
-        video_caption[f"frame {idx}"] = captions[idx - 1]
-    return video_caption
+            print(f"Most relevant frame for question '{q}' saved at {top_frame_path}")
+            print(f"Results for question '{q}' saved to {results_path}")
+
+    finally:
+        if not keep_temp_dir:
+            shutil.rmtree(temp_dir)
 
 
-def run_one_question(video_id, ann, caps, logs):
-    question = ann["question"]
-    answers = [ann[f"option {i}"] for i in range(5)]
-    formatted_question = (
-        f"Here is the question: {question}\n"
-        + "Here are the choices: "
-        + " ".join([f"{i}. {ans}" for i, ans in enumerate(answers)])
-    )
-    num_frames = len(caps)
+@cli.command("clip-embed")
+@click.option("--video_path", type=str, required=True, help="Path to input video.")
+@click.option("--question", type=str, required=True, multiple=True, help="A list of descriptions or questions.")
+@click.option("--sample_freq", type=int, default=30, help="Sampling frequency (e.g., every nth frame)")
+@click.option("--save_top_frame", type=str, default="top_frame_clip.png", help="Path to save the most relevant frame.")
+@click.option("--keep_temp_dir", is_flag=True, default=True, help="Keep the temporary directory with extracted frames.")
+@click.option("--record_top_k_frames", type=int, default=20, help="Number of top frames to record in results.")
+def process_video_clip(
+    video_path, question, sample_freq,
+    save_top_frame, keep_temp_dir,
+    record_top_k_frames
+    ):
+    """
+    This command uses a local CLIP model to directly compute embeddings
+    for both frames and the given questions.
+    """
+    from clip_utils import get_clip_text_embedding, get_clip_image_embedding
+    
+    video_name = Path(video_path).stem
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    result_dir = Path("results") / f"{video_name}_{timestamp}_clip"
+    result_dir.mkdir(parents=True, exist_ok=True)
 
-    ### Step 1 ###
-    sample_idx = np.linspace(1, num_frames, num=5, dtype=int).tolist()
-    sampled_caps = read_caption(caps, sample_idx)
-    previous_prompt, answer_str = ask_gpt_caption(
-        formatted_question, sampled_caps, num_frames
-    )
-    answer = parse_text_find_number(answer_str)
-    confidence_str = self_eval(previous_prompt, answer_str)
-    confidence = parse_text_find_confidence(confidence_str)
-    # segment description
-    segment_des = {
-        i + 1: f"{sample_idx[i]}-{sample_idx[i + 1]}"
-        for i in range(len(sample_idx) - 1)
-    }
-    ### Step 2 ###
-    if confidence < 3:
-        try:
-            candiate_descriptions = generate_description_step(
-                formatted_question,
-                sampled_caps,
-                num_frames,
-                segment_des,
-            )
-            parsed_candiate_descriptions = parse_json(candiate_descriptions)
-            frame_idx = frame_retrieval_seg_ego(
-                parsed_candiate_descriptions["frame_descriptions"], video_id, sample_idx
-            )
-            logger.info(f"Step 2: {frame_idx}")
-            sample_idx += frame_idx
-            sample_idx = sorted(list(set(sample_idx)))
+    temp_dir = f"temp_frames-{video_name}-{uuid.uuid4().hex}"
+    os.makedirs(temp_dir, exist_ok=True)
 
-            sampled_caps = read_caption(caps, sample_idx)
-            previous_prompt, answer_str = ask_gpt_caption_step(
-                formatted_question, sampled_caps, num_frames
-            )
-            answer = parse_text_find_number(answer_str)
-            confidence_str = self_eval(previous_prompt, answer_str)
-            confidence = parse_text_find_confidence(confidence_str)
-        except Exception as e:
-            logger.error(f"Step 2 Error: {e}")
-            answer_str = generate_final_answer(
-                formatted_question, sampled_caps, num_frames
-            )
-            answer = parse_text_find_number(answer_str)
+    try:
+        frames = extract_frames(video_path, sample_freq, temp_dir)
 
-    ### Step 3 ###
-    if confidence < 3:
-        try:
-            candiate_descriptions = generate_description_step(
-                formatted_question,
-                sampled_caps,
-                num_frames,
-                segment_des,
-            )
-            parsed_candiate_descriptions = parse_json(candiate_descriptions)
-            frame_idx = frame_retrieval_seg_ego(
-                parsed_candiate_descriptions["frame_descriptions"], video_id, sample_idx
-            )
-            logger.info(f"Step 3: {frame_idx}")
-            sample_idx += frame_idx
-            sample_idx = sorted(list(set(sample_idx)))
-            sampled_caps = read_caption(caps, sample_idx)
-            answer_str = generate_final_answer(
-                formatted_question, sampled_caps, num_frames
-            )
-            answer = parse_text_find_number(answer_str)
-        except Exception as e:
-            logger.error(f"Step 3 Error: {e}")
-            answer_str = generate_final_answer(
-                formatted_question, sampled_caps, num_frames
-            )
-            answer = parse_text_find_number(answer_str)
-    if answer == -1:
-        logger.info("Answer Index Not Found!")
-        answer = random.randint(0, 4)
+        for q in tqdm(question, desc="Processing questions with CLIP"):
+            # Compute CLIP text embedding
+            question_embedding = get_clip_text_embedding(q)
 
-    logger.info(f"Finished video: {video_id}/{answer}/{ann['truth']}")
+            similarities = []
+            for frame_number, fp in tqdm(frames, desc=f"Processing frames for question: {q}"):
+                frame_embedding = get_clip_image_embedding(fp)
+                sim = cosine_similarity(question_embedding, frame_embedding)
+                similarities.append((fp, sim))
 
-    label = int(ann["truth"])
-    corr = int(label == answer)
-    count_frame = len(sample_idx)
+            similarities.sort(key=lambda x: x[1], reverse=True)
 
-    logs[video_id] = {
-        "answer": answer,
-        "label": label,
-        "corr": corr,
-        "count_frame": count_frame,
-    }
+            # Save top frame and top `record_top_k_frames` results for each question
+            top_frame_path = result_dir / save_top_frame
+            if not top_frame_path.exists():
+                shutil.copy(similarities[0][0], top_frame_path)
 
+            top_results = [{"frame_path": f, "similarity": s} for f, s in similarities[:record_top_k_frames]]
+            results_path = result_dir / f"results_{q}_clip.json"
+            with open(results_path, 'w') as f:
+                json.dump({"question": q, "top_results": top_results}, f, indent=2)
 
-def main():
-    # if running full set, change subset to fullset
-    input_ann_file = "subset_anno.json"
-    all_cap_file = "lavila_subset.json"
-    json_file_name = "egoschema_subset.json"
+            # Print results
+            print(f"Top ranked frames for question '{q}' (CLIP-based) (path, similarity):")
+            for result in top_results:
+                print(f"{result['frame_path']}: {result['similarity']:.4f}")
 
-    anns = json.load(open(input_ann_file, "r"))
-    all_caps = json.load(open(all_cap_file, "r"))
-    logs = {}
+            print(f"Most relevant frame for question '{q}' (CLIP-based) saved at {top_frame_path}")
+            print(f"Results for question '{q}' saved to {results_path}")
 
-    tasks = [
-        (video_id, anns[video_id], all_caps[video_id], logs)
-        for video_id in list(anns.keys())
-    ]
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        executor.map(lambda p: run_one_question(*p), tasks)
-
-    json.dump(logs, open(json_file_name, "w"))
+    finally:
+        if not keep_temp_dir:
+            shutil.rmtree(temp_dir)
 
 
 if __name__ == "__main__":
-    main()
+    cli()
