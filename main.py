@@ -51,17 +51,18 @@ def process_video_openai(
         frames = extract_frames(video_path, sample_freq, temp_dir)
         processor = OpenAIEmbeddingProcessor(system_prompt, vision_prompt_template, cache_db_path)
 
-        for q in tqdm(question, desc="Processing questions"):
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            result_dir = Path("results") / f"{video_name}_{timestamp}"
-            result_dir.mkdir(parents=True, exist_ok=True)
+        # Create a single result directory for all questions
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        result_dir = Path("results") / f"{video_name}_{timestamp}"
+        result_dir.mkdir(parents=True, exist_ok=True)
 
+        for q in tqdm(question, desc="Processing questions"):
             similarities = process_frames_for_question(frames, q, processor)
             save_and_report_results(
                 similarities=similarities,
                 question=q,
                 result_dir=result_dir,
-                save_top_frame="top_frame.png",
+                save_top_frame=f"top_frame_{q}.png",
                 record_top_k_frames=record_top_k_frames,
                 model_type="openai"
             )
@@ -74,7 +75,7 @@ def process_video_openai(
 @click.option("--video_path", type=str, required=True, help="Path to input video.")
 @click.option("--question", type=str, required=True, multiple=True, help="A list of descriptions or questions.")
 @click.option("--sample_freq", type=int, default=30, help="Sampling frequency (e.g., every nth frame)")
-@click.option("--save_top_frame", type=str, default="top_frame_clip.png", help="Path to save the most relevant frame.")
+@click.option("--save_top_frame", type=str, default="top_frame_clip", help="Path to save the most relevant frame.")
 @click.option("--keep_temp_dir", is_flag=True, default=True, help="Keep the temporary directory with extracted frames.")
 @click.option("--record_top_k_frames", type=int, default=20, help="Number of top frames to record in results.")
 def process_video_clip(
@@ -89,16 +90,17 @@ def process_video_clip(
     from clip_utils import get_clip_text_embedding, get_clip_image_embedding
     
     video_name = Path(video_path).stem
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    result_dir = Path("results") / f"{video_name}_{timestamp}_clip"
-    result_dir.mkdir(parents=True, exist_ok=True)
-
-    temp_dir = f"temp_frames-{video_name}-{uuid.uuid4().hex}"
+    temp_dir = f"temp_frames-{video_name}"
     os.makedirs(temp_dir, exist_ok=True)
 
     try:
         frames = extract_frames(video_path, sample_freq, temp_dir)
         processor = ClipEmbeddingProcessor()
+
+        # Create a single result directory for all questions
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        result_dir = Path("results") / f"{video_name}_{timestamp}_clip"
+        result_dir.mkdir(parents=True, exist_ok=True)
 
         for q in tqdm(question, desc="Processing questions with CLIP"):
             similarities = process_frames_for_question(frames, q, processor)
@@ -106,7 +108,7 @@ def process_video_clip(
                 similarities=similarities,
                 question=q,
                 result_dir=result_dir,
-                save_top_frame=save_top_frame,
+                save_top_frame=f"{save_top_frame}_{q}.png",
                 record_top_k_frames=record_top_k_frames,
                 model_type="clip"
             )
@@ -120,4 +122,4 @@ if __name__ == "__main__":
     # run openai with
     # python main.py openai-embed --video_path data/V1_end.mp4  --question "Putting red cabbage solution into test tube for the second time"
     # run clip with
-    # python main.py clip-embed --video_path data/V1_end.mp4 --question "Pouring water into red cabbage filled beaker" "Turning on heat plate" "Putting red cabbage solution into test tube (first time)" "Putting red cabbage solution into test tube (second time)"
+    # python main.py clip-embed --video_path data/V1_end.mp4 --question "Pouring water into red cabbage filled beaker" --question "Turning on heat plate" --question "Putting red cabbage solution into test tube (first time)" --question "Putting red cabbage solution into test tube (second time)"
