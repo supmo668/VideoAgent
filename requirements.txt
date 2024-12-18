@@ -1,0 +1,10 @@
+click>=8.0.0
+tqdm>=4.65.0
+python-dotenv>=1.0.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+openai>=1.0.0
+torch>=2.0.0
+torchvision>=0.15.0
+clip @ git+https://github.com/openai/CLIP.git
+PyYAML>=6.0.0
