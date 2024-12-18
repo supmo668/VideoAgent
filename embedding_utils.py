@@ -85,7 +85,7 @@ def save_and_report_results(
 ) -> None:
     """Save results and report them to console."""
     # Save top frame
-    top_frame_path = result_dir / save_top_frame
+    top_frame_path = result_dir / f"{save_top_frame}_Q:{question[:10]}"
     if not top_frame_path.exists():
         shutil.copy(similarities[0][0], top_frame_path)
 
