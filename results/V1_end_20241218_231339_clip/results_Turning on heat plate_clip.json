@@ -1,0 +1,85 @@
+{
+  "question": "Turning on heat plate",
+  "top_results": [
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000132.png",
+      "similarity": 0.24437570980740098
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000115.png",
+      "similarity": 0.24125114739795223
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000006.png",
+      "similarity": 0.23544472566717164
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000007.png",
+      "similarity": 0.23542674371299063
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000140.png",
+      "similarity": 0.22682780231386224
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000010.png",
+      "similarity": 0.2260596017807613
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000104.png",
+      "similarity": 0.22352355283840075
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000084.png",
+      "similarity": 0.22156621985432695
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000082.png",
+      "similarity": 0.2189095660891857
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000109.png",
+      "similarity": 0.21734465575402273
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000086.png",
+      "similarity": 0.21668484785661402
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000085.png",
+      "similarity": 0.21581462688674174
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000027.png",
+      "similarity": 0.21481600810071758
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000020.png",
+      "similarity": 0.21481177158423498
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000116.png",
+      "similarity": 0.21453721500038986
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000108.png",
+      "similarity": 0.21413534211253707
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000058.png",
+      "similarity": 0.2138992825780986
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000023.png",
+      "similarity": 0.21326658624783013
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000091.png",
+      "similarity": 0.21295273583073687
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000070.png",
+      "similarity": 0.21276474908611115
+    }
+  ]
+}
