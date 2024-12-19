@@ -19,6 +19,45 @@ from embedding_utils import (
     save_and_report_results,
 )
 
+def setup_processing_environment(
+    video_path, keep_temp_dir=True, suffix=""
+    ):
+    """Set up the processing environment including temporary and results directories."""
+    video_name = Path(video_path).stem
+    temp_dir = Path(video_path).parent / f"temp_frames-{video_name}"
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    # Create result directory
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    result_dir = Path("results") / f"{video_name}_{timestamp}{suffix}"
+    result_dir.mkdir(parents=True, exist_ok=True)
+    
+    return temp_dir, result_dir
+
+def process_video_with_processor(
+    processor,
+    frames,
+    questions,
+    result_dir,
+    record_top_k_frames,
+    model_type
+):
+    """Process video frames with the given processor for each question."""
+    for q in tqdm(questions, desc=f"Processing questions with {model_type.upper()}"):
+        similarities = process_frames_for_question(frames, q, processor)
+        save_and_report_results(
+            similarities=similarities,
+            question=q,
+            result_dir=result_dir,
+            record_top_k_frames=record_top_k_frames,
+            model_type=model_type
+        )
+
+def cleanup_environment(temp_dir, keep_temp_dir):
+    """Clean up temporary directory if needed."""
+    if not keep_temp_dir:
+        shutil.rmtree(temp_dir)
+
 @click.group()
 def cli():
     pass
@@ -43,45 +82,35 @@ def process_video_openai(
     # Initialize cache DB
     init_cache_db(cache_db_path)
 
-    video_name = Path(video_path).stem
-    temp_dir = f"temp_frames-{video_name}"
-    os.makedirs(temp_dir, exist_ok=True)
-
     try:
+        # Set up environment
+        temp_dir, result_dir = setup_processing_environment(video_path, keep_temp_dir)
+        
+        # Extract frames and initialize processor
         frames = extract_frames(video_path, sample_freq, temp_dir)
         processor = OpenAIEmbeddingProcessor(system_prompt, vision_prompt_template, cache_db_path)
 
-        # Create a single result directory for all questions
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        result_dir = Path("results") / f"{video_name}_{timestamp}"
-        result_dir.mkdir(parents=True, exist_ok=True)
-
-        for q in tqdm(question, desc="Processing questions"):
-            similarities = process_frames_for_question(frames, q, processor)
-            save_and_report_results(
-                similarities=similarities,
-                question=q,
-                result_dir=result_dir,
-                save_top_frame=f"top_frame_{q}.png",
-                record_top_k_frames=record_top_k_frames,
-                model_type="openai"
-            )
+        # Process video
+        process_video_with_processor(
+            processor=processor,
+            frames=frames,
+            questions=question,
+            result_dir=result_dir,
+            record_top_k_frames=record_top_k_frames,
+            model_type="openai"
+        )
     finally:
-        if not keep_temp_dir:
-            shutil.rmtree(temp_dir)
-
+        cleanup_environment(temp_dir, keep_temp_dir)
 
 @cli.command("clip-embed")
 @click.option("--video_path", type=str, required=True, help="Path to input video.")
 @click.option("--question", type=str, required=True, multiple=True, help="A list of descriptions or questions.")
 @click.option("--sample_freq", type=int, default=30, help="Sampling frequency (e.g., every nth frame)")
-@click.option("--save_top_frame", type=str, default="top_frame_clip", help="Path to save the most relevant frame.")
 @click.option("--keep_temp_dir", is_flag=True, default=True, help="Keep the temporary directory with extracted frames.")
 @click.option("--record_top_k_frames", type=int, default=20, help="Number of top frames to record in results.")
 def process_video_clip(
     video_path, question, sample_freq,
-    save_top_frame, keep_temp_dir,
-    record_top_k_frames
+    record_top_k_frames, keep_temp_dir
     ):
     """
     This command uses a local CLIP model to directly compute embeddings
@@ -89,33 +118,29 @@ def process_video_clip(
     """
     from clip_utils import get_clip_text_embedding, get_clip_image_embedding
     
-    video_name = Path(video_path).stem
-    temp_dir = f"temp_frames-{video_name}"
-    os.makedirs(temp_dir, exist_ok=True)
-
     try:
+        # Set up environment
+        temp_dir, result_dir = setup_processing_environment(
+            video_path, 
+            keep_temp_dir,
+            suffix="_clip"
+        )
+        
+        # Extract frames and initialize processor
         frames = extract_frames(video_path, sample_freq, temp_dir)
         processor = ClipEmbeddingProcessor()
 
-        # Create a single result directory for all questions
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        result_dir = Path("results") / f"{video_name}_{timestamp}_clip"
-        result_dir.mkdir(parents=True, exist_ok=True)
-
-        for q in tqdm(question, desc="Processing questions with CLIP"):
-            similarities = process_frames_for_question(frames, q, processor)
-            save_and_report_results(
-                similarities=similarities,
-                question=q,
-                result_dir=result_dir,
-                save_top_frame=f"{save_top_frame}_{q}.png",
-                record_top_k_frames=record_top_k_frames,
-                model_type="clip"
-            )
+        # Process video
+        process_video_with_processor(
+            processor=processor,
+            frames=frames,
+            questions=question,
+            result_dir=result_dir,
+            record_top_k_frames=record_top_k_frames,
+            model_type="clip"
+        )
     finally:
-        if not keep_temp_dir:
-            shutil.rmtree(temp_dir)
-
+        cleanup_environment(temp_dir, keep_temp_dir)
 
 if __name__ == "__main__":
     cli()

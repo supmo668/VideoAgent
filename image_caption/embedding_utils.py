@@ -79,15 +79,15 @@ def save_and_report_results(
     similarities: List[Tuple[str, float]],
     question: str,
     result_dir: Path,
-    save_top_frame: str,
     record_top_k_frames: int,
     model_type: str = ""
 ) -> None:
     """Save results and report them to console."""
     # Save top frame
-    top_frame_path = result_dir / f"{save_top_frame}_Q:{question[:10]}"
+    top_frame_path = result_dir / f"top_key_frame_Q-{question[:10]}.png".replace(":", "")
     if not top_frame_path.exists():
-        shutil.copy(similarities[0][0], top_frame_path)
+        shutil.copy(
+            similarities[0][0], top_frame_path)
 
     # Save results to JSON
     top_results = [{"frame_path": f, "similarity": s} for f, s in similarities[:record_top_k_frames]]
