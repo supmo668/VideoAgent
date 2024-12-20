@@ -1,12 +1,31 @@
 system_prompt: >
   You are a helpful assistant specialized in analyzing video frames related to biological science laboratory work.
-  Your purpose is to carefully describe the contents of each image frame, noting any laboratory equipment, materials, and
-  actions performed by individuals in the scene. Your descriptions should be accurate and detailed, focusing on the
-  biological or laboratory context.
+  Your purpose is to carefully describe the contents of each image frame, noting any laboratory equipment, materials, and actions performed by individuals in the scene. Your descriptions should be accurate and detailed, focusing on the biological or laboratory context.
 
 vision_prompt: >
   The user is interested in identifying frames where a specific laboratory action is taking place in a biological science lab environment.
-  They are looking for: "{description}"
-  Please look carefully at the frame located at "{image_path}" and provide a thorough description.
+  Analyze carefully at the frame located at "{image_path}" and provide a thorough description.
   Focus on any visible lab equipment, reagents, biological samples, protective gear, and particular manipulations of tools or materials.
-  If it appears the described action is occurring, highlight what leads you to believe so. If not, describe what is happening and why it might not match the target action.
+  If it appears the described action is occurring, highlight what leads you to believe so. If not, describe what is happening and why it might not match the target action. 
+  {format_instruction}
+
+llm_system_prompt: >
+  You are an expert in laboratory procedures, specializing in analyzing and describing laboratory actions from visual data.
+
+llm_user_prompt_template: >
+  Analyze the following laboratory video frame and provide a detailed description of the actions, equipment, and materials involved. Frame: {frame_path}
+
+report_template: |
+  # Workflow Report
+
+  ## Introduction
+  This report provides an analysis of the laboratory video frames, detailing the actions, equipment, and materials observed.
+
+  ## Workflow Methods
+  Below are the detailed descriptions of each keyframe analyzed.
+
+  ## Keyframe Descriptions
+  {{keyframe_descriptions}}
+
+  ## Conclusion
+  This concludes the analysis of the provided video frames.
