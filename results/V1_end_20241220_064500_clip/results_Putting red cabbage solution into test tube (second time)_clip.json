@@ -1,0 +1,85 @@
+{
+  "question": "Putting red cabbage solution into test tube (second time)",
+  "top_results": [
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000079.png",
+      "similarity": 0.27905350138483526
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000124.png",
+      "similarity": 0.27830493190106226
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000078.png",
+      "similarity": 0.27803240185559874
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000077.png",
+      "similarity": 0.27715902602493164
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000100.png",
+      "similarity": 0.27654411137067253
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000080.png",
+      "similarity": 0.2750578974884323
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000089.png",
+      "similarity": 0.273718142584765
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000081.png",
+      "similarity": 0.2731909711642237
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000123.png",
+      "similarity": 0.2725568121837644
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000130.png",
+      "similarity": 0.2720424733476938
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000075.png",
+      "similarity": 0.27139646565774306
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000112.png",
+      "similarity": 0.26986371023011757
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000118.png",
+      "similarity": 0.26821522747675586
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000117.png",
+      "similarity": 0.2657149027676195
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000121.png",
+      "similarity": 0.2614441300854614
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000122.png",
+      "similarity": 0.26090497758679115
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000087.png",
+      "similarity": 0.2600749956622436
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000076.png",
+      "similarity": 0.2581976806666512
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000088.png",
+      "similarity": 0.2579960561206278
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000115.png",
+      "similarity": 0.25542206482106733
+    }
+  ]
+}

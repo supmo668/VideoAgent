@@ -1,0 +1,13 @@
+{
+  "question": "Turning on heat plate",
+  "top_results": [
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-session_video/frame_000000.png",
+      "similarity": 0.20818817937373182
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-session_video/frame_000001.png",
+      "similarity": 0.18490251772282354
+    }
+  ]
+}
