@@ -1,0 +1,85 @@
+{
+  "question": "Putting red cabbage solution into test tube (first time)",
+  "top_results": [
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000000.png",
+      "similarity": 0.4499585762607629
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000072.png",
+      "similarity": 0.4499585762607629
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000123.png",
+      "similarity": 0.4499585762607629
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000135.png",
+      "similarity": 0.4499585762607629
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000083.png",
+      "similarity": 0.4499097004505905
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000058.png",
+      "similarity": 0.44424603713292016
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000122.png",
+      "similarity": 0.44424603713292016
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000027.png",
+      "similarity": 0.40545655505229716
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000044.png",
+      "similarity": 0.40195037132353717
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000063.png",
+      "similarity": 0.40195037132353717
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000071.png",
+      "similarity": 0.40195037132353717
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000079.png",
+      "similarity": 0.40195037132353717
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000081.png",
+      "similarity": 0.40195037132353717
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000084.png",
+      "similarity": 0.40195037132353717
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000086.png",
+      "similarity": 0.40195037132353717
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000091.png",
+      "similarity": 0.40195037132353717
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000097.png",
+      "similarity": 0.40195037132353717
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000110.png",
+      "similarity": 0.40195037132353717
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000113.png",
+      "similarity": 0.40195037132353717
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000115.png",
+      "similarity": 0.40195037132353717
+    }
+  ]
+}
