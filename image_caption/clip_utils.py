@@ -8,13 +8,13 @@ import clip
 device = "cuda" if torch.cuda.is_available() else "cpu"
 clip_model, clip_preprocess = clip.load("ViT-B/32", device=device)
 
-def get_clip_text_embedding(text: str) -> np.ndarray:
+def get_text_embedding_clip(text: str) -> np.ndarray:
     text_token = clip.tokenize(text).to(device)
     with torch.no_grad():
         text_embedding = clip_model.encode_text(text_token).cpu().numpy()[0]
     return text_embedding.astype(np.float32)
 
-def get_clip_image_embedding(image_path: str) -> np.ndarray:
+def get_frame_embedding_clip(image_path: str) -> np.ndarray:
     image = Image.open(image_path).convert("RGB")
     image_input = clip_preprocess(image).unsqueeze(0).to(device)
     with torch.no_grad():
