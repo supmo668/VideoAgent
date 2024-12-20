@@ -8,3 +8,5 @@ torch>=2.0.0
 torchvision>=0.15.0
 clip @ git+https://github.com/openai/CLIP.git
 PyYAML>=6.0.0
+langchain==0.3.13
+boto3>=1.24.0

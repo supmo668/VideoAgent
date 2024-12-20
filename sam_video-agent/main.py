@@ -4,15 +4,18 @@ import torch
 import cv2
 import requests
 from PIL import Image
+from openai import OpenAI
 from transformers import SamModel, SamProcessor
+from config import SAM_MODEL_NAME, LLM_PROMPT_TEMPLATE, DEFAULT_NUM_FRAMES, DEFAULT_TOP_K_SAM_ENTITIES
 
 ############################################################
 # Configuration and Setup
 ############################################################
 
-SAM_MODEL_NAME = "facebook/sam-vit-huge"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
+# Initialize OpenAI client
+client = OpenAI()
 
 ############################################################
 # Helper Functions
@@ -147,22 +150,32 @@ def create_prompt_from_summary(summary):
     Given a summary of SAM outputs, create a prompt to ask an LLM 
     about the likely laboratory action.
     """
-    prompt = (
-        "You are given a description of segmented objects from video frames in a laboratory setting.\n"
-        "The segments represent items or areas identified by the Segment Anything Model (SAM). Below is the summary:\n\n"
-        f"{summary}\n\n"
-        "Based on the above segments, what is the likely laboratory action taking place in this video?"
-    )
-    return prompt
+    return LLM_PROMPT_TEMPLATE.format(summary=summary)
 
-def get_lab_action_description_from_LLM(prompt):
+def get_lab_action_description_from_LLM(prompt: str) -> str:
     """
-    Placeholder for querying an LLM (like OpenAI's GPT-4).
-    In reality, implement a call to OpenAI API or another LLM.
-    Here, we return a mock response.
+    Query GPT-4 to analyze the laboratory action.
     """
-    # Mocked response
-    return "It appears that someone is carefully measuring and pipetting a chemical solution into test tubes."
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an expert in laboratory procedures, specializing in analyzing and describing laboratory actions from visual data."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            temperature=0.7,
+            max_tokens=500
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"Error getting LLM response: {e}")
+        return "Failed to analyze laboratory action"
 
 ############################################################
 # Main CLI and Workflow
@@ -170,8 +183,8 @@ def get_lab_action_description_from_LLM(prompt):
 
 @click.command()
 @click.option("--video-path", required=True, type=click.Path(exists=True), help="Path to the input laboratory video.")
-@click.option("--num-frames", default=5, show_default=True, help="Number of frames to sample from the video.")
-@click.option("--top-k-sam-entities", default=3, show_default=True, help="Number of top SAM segments to highlight.")
+@click.option("--num-frames", default=DEFAULT_NUM_FRAMES, show_default=True, help="Number of frames to sample from the video.")
+@click.option("--top-k-sam-entities", default=DEFAULT_TOP_K_SAM_ENTITIES, show_default=True, help="Number of top SAM segments to highlight.")
 def main(video_path, num_frames, top_k_sam_entities):
     # Step 1: Extract key frames from the video
     frames = get_keyframes(video_path, num_frames=num_frames)

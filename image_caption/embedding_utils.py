@@ -5,6 +5,10 @@ from pathlib import Path
 from typing import List, Tuple, Dict, Any
 from tqdm import tqdm
 
+from db_utils import init_cache_db, get_cached_embedding, save_embedding_to_cache
+from embed_utils import get_text_embedding_openai, get_frame_description
+from clip_utils import get_frame_embedding_clip, get_text_embedding_clip
+
 def cosine_similarity(embedding1, embedding2):
     # Assuming embeddings are numpy arrays
     return (embedding1 @ embedding2) / (
@@ -21,49 +25,60 @@ class EmbeddingProcessor(ABC):
         pass
 
 class OpenAIEmbeddingProcessor(EmbeddingProcessor):
-    def __init__(self, system_prompt: str, vision_prompt_template: str, cache_db_path: str):
+    def __init__(
+        self, system_prompt: str, vision_prompt_template: str, cache_db_path: str
+        ):
         self.system_prompt = system_prompt
         self.vision_prompt_template = vision_prompt_template
         self.cache_db_path = cache_db_path
 
     def get_text_embedding(self, text: str) -> Any:
-        from main import get_text_embedding_openai
         return get_text_embedding_openai(text)
 
     def get_frame_embedding(self, frame_path: str) -> Any:
-        from main import get_cached_embedding, get_frame_description, get_text_embedding_openai, save_embedding_to_cache
         video_path = str(Path(frame_path).parent.parent)
         frame_number = int(Path(frame_path).stem.split('_')[1])
-        
-        cached_embedding = get_cached_embedding(self.cache_db_path, video_path, frame_number, '')
+        cached_embedding = get_cached_embedding(self.cache_db_path, video_path, frame_number, '', 'openai')
         if cached_embedding is not None:
             return cached_embedding
-            
+
         frame_description = get_frame_description(
             self.system_prompt, 
             self.vision_prompt_template, 
-            frame_path, 
-            ''
+            frame_path
         )
         frame_embedding = get_text_embedding_openai(frame_description)
-        save_embedding_to_cache(self.cache_db_path, video_path, frame_number, '', frame_embedding)
+        save_embedding_to_cache(self.cache_db_path, video_path, frame_number, '', 'openai', frame_embedding)
         return frame_embedding
 
 class ClipEmbeddingProcessor(EmbeddingProcessor):
+    def __init__(self, cache_db_path: str):
+        self.cache_db_path = cache_db_path
+
     def get_text_embedding(self, text: str) -> Any:
-        from clip_utils import get_clip_text_embedding
-        return get_clip_text_embedding(text)
+        return get_text_embedding_clip(text)
 
     def get_frame_embedding(self, frame_path: str) -> Any:
-        from clip_utils import get_clip_image_embedding
-        return get_clip_image_embedding(frame_path)
+        video_path = str(Path(frame_path).parent.parent)
+        frame_number = int(Path(frame_path).stem.split('_')[1])
+        cached_embedding = get_cached_embedding(self.cache_db_path, video_path, frame_number, '', 'clip')
+        if cached_embedding is not None:
+            return cached_embedding
+
+        frame_embedding = get_frame_embedding_clip(frame_path)
+        save_embedding_to_cache(self.cache_db_path, video_path, frame_number, '', 'clip', frame_embedding)
+        return frame_embedding
 
 def process_frames_for_question(
     frames: List[Tuple[int, str]],
     question: str,
     processor: EmbeddingProcessor,
 ) -> List[Tuple[str, float]]:
-    """Process frames for a given question using the specified embedding processor."""
+    """Process frames for a given question using the specified embedding processor.
+    
+    Returns a list of tuples, where the first element of the tuple is the file path to the frame
+    and the second element is the cosine similarity between the frame embedding and the question embedding.
+    """
     question_embedding = processor.get_text_embedding(question)
     similarities = []
     
@@ -83,14 +98,22 @@ def save_and_report_results(
     model_type: str = ""
 ) -> None:
     """Save results and report them to console."""
+    print(similarities)
+    # if not similarities:
+    #     print(f"Warning: No frames found matching the question '{question}'")
+    #     return
+
     # Save top frame
     top_frame_path = result_dir / f"top_key_frame_Q-{question[:10]}.png".replace(":", "")
     if not top_frame_path.exists():
         shutil.copy(
-            similarities[0][0], top_frame_path)
+            similarities[0][0], top_frame_path
+        )
 
     # Save results to JSON
-    top_results = [{"frame_path": f, "similarity": s} for f, s in similarities[:record_top_k_frames]]
+    top_results = [
+        {"frame_path": f, "similarity": s} for f, s in similarities[:record_top_k_frames]
+    ]
     results_path = result_dir / f"results_{question}_{model_type}.json"
     with open(results_path, 'w') as f:
         json.dump({"question": question, "top_results": top_results}, f, indent=2)
