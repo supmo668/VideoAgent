@@ -96,21 +96,17 @@ def save_and_report_results(
     result_dir: Path,
     record_top_k_frames: int,
     model_type: str = ""
-) -> None:
+) -> Tuple[str, List[Dict[str, Any]]]:
     """Save results and report them to console."""
-    print(similarities)
-    # if not similarities:
-    #     print(f"Warning: No frames found matching the question '{question}'")
-    #     return
 
     # Save top frame
-    top_frame_path = result_dir / f"top_key_frame_Q-{question[:10]}.png".replace(":", "")
-    if not top_frame_path.exists():
+    key_frame_path = result_dir / f"top_key_frame_Q-{question[:10]}.png".replace(":", "")
+    if not key_frame_path.exists():
         shutil.copy(
-            similarities[0][0], top_frame_path
+            similarities[0][0], key_frame_path
         )
 
-    # Save results to JSON
+    # Ensure similarities are floats
     top_results = [
         {"frame_path": f, "similarity": s} for f, s in similarities[:record_top_k_frames]
     ]
@@ -124,5 +120,6 @@ def save_and_report_results(
     for result in top_results:
         print(f"{result['frame_path']}: {result['similarity']:.4f}")
 
-    print(f"Most relevant frame for question '{question}'{model_suffix} saved at {top_frame_path}")
+    print(f"Most relevant frame for question '{question}'{model_suffix} saved at {key_frame_path}")
     print(f"Results for question '{question}' saved to {results_path}")
+    return key_frame_path, top_results

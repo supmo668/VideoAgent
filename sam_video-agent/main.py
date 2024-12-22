@@ -6,11 +6,25 @@ import requests
 from PIL import Image
 from openai import OpenAI
 from transformers import SamModel, SamProcessor
-from config import SAM_MODEL_NAME, LLM_PROMPT_TEMPLATE, DEFAULT_NUM_FRAMES, DEFAULT_TOP_K_SAM_ENTITIES
+from models import ImageActionFrame
+import yaml
+from dotenv import load_dotenv
+from typing import List, Tuple, Dict, Any
+import datetime
+import json
 
+load_dotenv()
 ############################################################
 # Configuration and Setup
 ############################################################
+
+with open('config.yaml', 'r') as file:
+    config = yaml.safe_load(file)
+
+SAM_MODEL_NAME = config['sam_model_name']
+LLM_PROMPT_TEMPLATE = config['llm_prompt_template']
+DEFAULT_NUM_FRAMES = config['default_num_frames']
+DEFAULT_TOP_K_SAM_ENTITIES = config['default_top_k_sam_entities']
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -60,25 +74,25 @@ def get_keyframes(video_path, num_frames=5):
         raise ValueError("No frames were extracted from the video. Check the input video.")
     return frames
 
-def run_sam_on_frames(model, processor, frames, input_points=None):
+def run_sam_on_frames(model, processor, frames: List[Any], question: str, input_points: List[List[List[int]]] = None) -> List[Dict[str, Any]]:
     """
-    Run SAM on a list of PIL image frames.
+    Run SAM on a list of PIL image frames using a guiding question for segmentation.
     If input_points is None, we'll pick a central point as a simple prompt.
-    In practice, adapt this according to your segmentation prompt needs.
     """
     results = []
     for frame in frames:
         if input_points is None:
             w, h = frame.size
-            # Use a central point as a prompt (example)
-            pts = [[[w//2, h//2]]]
+            # Use the question to determine input points or as a prompt (example)
+            # This is a placeholder for more complex logic
+            pts = [[[w//2, h//2]]]  # Example: central point
         else:
             pts = input_points
 
+        # Optionally use the question in the processor logic
         inputs = processor(frame, input_points=pts, return_tensors="pt").to(DEVICE)
         with torch.no_grad():
             outputs = model(**inputs)
-
         # Post-process masks
         masks = processor.image_processor.post_process_masks(
             outputs.pred_masks.cpu(),
@@ -95,7 +109,8 @@ def run_sam_on_frames(model, processor, frames, input_points=None):
         # Each frame can have multiple masks; store them
         frame_result = {
             "masks": masks,   # list of BoolTensors (one per detected segment)
-            "scores": scores  # list of IoU scores corresponding to each mask
+            "scores": scores,  # list of IoU scores corresponding to each mask
+            "ious": scores  # list of IoU scores corresponding to each mask
         }
         results.append(frame_result)
     return results
@@ -145,37 +160,29 @@ def summarize_sam_output(sam_results, top_k_sam_entities=3):
     summary = "\n".join(summary_lines)
     return summary
 
-def create_prompt_from_summary(summary):
+def create_prompt_from_summary(summary, image_path, format_instruction=""):
     """
-    Given a summary of SAM outputs, create a prompt to ask an LLM 
-    about the likely laboratory action.
+    Given a summary of SAM outputs and an image path, format the prompt for the LLM.
     """
-    return LLM_PROMPT_TEMPLATE.format(summary=summary)
+    return LLM_PROMPT_TEMPLATE.format(
+        summary=summary, image=image_path, format_instruction=format_instruction)
 
 def get_lab_action_description_from_LLM(prompt: str) -> str:
     """
     Query GPT-4 to analyze the laboratory action.
     """
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are an expert in laboratory procedures, specializing in analyzing and describing laboratory actions from visual data."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            temperature=0.7,
-            max_tokens=500
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        print(f"Error getting LLM response: {e}")
-        return "Failed to analyze laboratory action"
+    system_prompt = config['system_prompt']
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.1,
+        max_tokens=1000
+    )
+    return response.choices[0].message.content.strip()
+
 
 ############################################################
 # Main CLI and Workflow
@@ -185,29 +192,60 @@ def get_lab_action_description_from_LLM(prompt: str) -> str:
 @click.option("--video-path", required=True, type=click.Path(exists=True), help="Path to the input laboratory video.")
 @click.option("--num-frames", default=DEFAULT_NUM_FRAMES, show_default=True, help="Number of frames to sample from the video.")
 @click.option("--top-k-sam-entities", default=DEFAULT_TOP_K_SAM_ENTITIES, show_default=True, help="Number of top SAM segments to highlight.")
-def main(video_path, num_frames, top_k_sam_entities):
+@click.option("--question", required=True, type=str, help="Input question to guide the analysis.")
+def main(video_path: str, num_frames: int, top_k_sam_entities: int, question: str) -> None:
     # Step 1: Extract key frames from the video
-    frames = get_keyframes(video_path, num_frames=num_frames)
+    frames: List[Any] = get_keyframes(video_path, num_frames=num_frames)
 
     # Step 2: Load SAM model and processor
     model, processor = load_sam_model()
 
     # Step 3: Run SAM on frames
-    sam_results = run_sam_on_frames(model, processor, frames)
+    sam_results: List[Dict[str, Any]] = run_sam_on_frames(model, processor, frames, question)
 
-    # Step 4: Summarize SAM output
-    summary = summarize_sam_output(sam_results, top_k_sam_entities=top_k_sam_entities)
-    print("SAM Summary:\n", summary)
+    # Step 4: Select key frame based on highest average IoU
+    key_frame_index: int = max(
+        range(len(sam_results)), 
+        key=lambda i: sum(sum(ious) for ious in sam_results[i]['ious']) / len(sam_results[i]['ious'])
+    )
+    key_frame_results: Dict[str, Any] = sam_results[key_frame_index]
 
-    # Step 5: Create a prompt for the LLM
-    prompt = create_prompt_from_summary(summary)
+    # Step 5: Summarize SAM output for the key frame
+    summary: str = summarize_sam_output(
+        [key_frame_results], top_k_sam_entities=top_k_sam_entities)
 
-    # Step 6: Query the LLM (mocked in this example)
-    lab_action = get_lab_action_description_from_LLM(prompt)
+    # Step 6: Create a prompt for the LLM
+    prompt: str = create_prompt_from_summary(summary, video_path, format_instruction=question)
+
+    # Step 7: Query the LLM 
+    lab_action: str = get_lab_action_description_from_LLM(prompt)
     print("\nLikely Laboratory Action:\n", lab_action)
+
+    # Document outputs
+    results_dir = config['results_directory']
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_results_dir = os.path.join(results_dir, f"run_{timestamp}")
+    os.makedirs(run_results_dir, exist_ok=True)
+
+    # Save key frame image
+    key_frame_path = os.path.join(run_results_dir, f"key_frame_{key_frame_index}.png")
+    frames[key_frame_index].save(key_frame_path)
+
+    # Save results to JSON
+    result_data = {
+        "key_frame": key_frame_path,
+        "sam_summary": summary,
+        "final_output": lab_action
+    }
+    result_json_path = os.path.join(run_results_dir, "result.json")
+    with open(result_json_path, "w") as json_file:
+        json.dump(result_data, json_file, indent=4)
+
+    print(f"Results saved to: {run_results_dir}")
 
 
 if __name__ == "__main__":
     main()
     # cli
-    # python main.py --video-path ../data/V1_end.mp4 --num-frames 5 --top-k-sam-entities 3
+    # python main.py --video-path ../data/V1_end.mp4 --num-frames 5 --top-k-sam-entities 3 --question "Pouring water into red cabbage filled beaker"
+    # python main.py --video_path data/V1_end.mp4 --question "Pouring water into red cabbage filled beaker" --question "Turning on heat plate" --question "Putting red cabbage solution into test tube (first time)" --question "Putting red cabbage solution into test tube (second time)"
