@@ -8,10 +8,9 @@ from pathlib import Path
 from datetime import datetime
 from tqdm import tqdm
 import yaml
-from typing import List, Dict
-import boto3
-from botocore.exceptions import NoCredentialsError
+from typing import List, Dict, Tuple
 import openai
+from urllib.request import urlretrieve
 
 from utils import load_config
 from db_utils import init_cache_db, get_cached_embedding, save_embedding_to_cache
@@ -25,22 +24,25 @@ from embedding_utils import (
 )
 
 def setup_processing_environment(
-    video_path, cache_db_path, keep_temp_dir=True, suffix=""
-    ):
+    video_path: str, cache_db_path: str, keep_temp_dir: bool = True, suffix: str = ""
+) -> Tuple[Path, Path]:
     """Set up the processing environment including temporary and results directories."""
     
     # Initialize cache DB
     init_cache_db(cache_db_path)
 
-    # Check if video_path is an S3 URL and download if necessary
-    if video_path.startswith("s3://"):
-        local_video_path = Path("/tmp") / Path(video_path).name
-        download_video_from_s3(video_path, str(local_video_path))
-        video_path = str(local_video_path)
-
+    # Assume video_path is an HTTP URL
     video_name = Path(video_path).stem
     temp_dir = Path(__file__).parent.parent / f"temp_frames-{video_name}"
     os.makedirs(temp_dir, exist_ok=True)
+    
+    # Download video from HTTP URL
+    if video_path.startswith("http"):
+        video_name = Path(video_path).stem
+        local_video_path = temp_dir / video_name
+        if not local_video_path.exists():
+            urlretrieve(video_path, str(local_video_path))
+            video_path = str(local_video_path)
     
     # Create result directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -62,7 +64,7 @@ def process_video_with_processor(
     """Process video frames with the given processor for each question."""
     for q in tqdm(questions, desc=f"Processing questions with {model_type.upper()}"):
         similarities: List[Tuple[str, float]] = process_frames_for_question(frames, q, processor)
-        save_and_report_results(
+        key_frame_path, top_results = save_and_report_results(
             similarities=similarities,
             question=q,
             result_dir=result_dir,
@@ -72,20 +74,24 @@ def process_video_with_processor(
         
         # Generate report if flag is set
         if generate_report:
-            report_data = []
-            for frame_path, _ in similarities:
-                # Generate frame description for each frame
+            report_data: List[Dict[str, str]] = []
+            # Process only the top frame for each question
+            if similarities:
+                top_frame_path, _ = similarities[0]  # Assuming similarities is sorted by relevance
+                # Generate frame description for the top frame
                 frame_description = get_frame_description(
-                    processor.cfg["system_prompt"], 
-                    processor.cfg["vision_prompt_template"], 
-                    frame_path
+                    cfg["system_prompt"], 
+                    cfg["vision_prompt"], 
+                    top_frame_path
                 )
-                print(f"Report for frame {frame_path}: {frame_description}")
+                print(f"Report for frame {top_frame_path}: {frame_description}")
+                key_frame_path_rel = Path(key_frame_path).relative_to(result_dir)
                 report_data.append(
-                    {"frame_path": frame_path, "description": frame_description})
+                    {"frame_path": str(key_frame_path_rel), "description": frame_description})
             
-            # Log to markdown report
-            log_to_markdown_report(result_dir / "workflow_report.md", report_data, load_config("config.yaml")['report_template'])
+    # Log to markdown report
+    log_to_markdown_report(
+        result_dir / "workflow_report.md", report_data, cfg['report_template'])
 
 def cleanup_environment(temp_dir, keep_temp_dir):
     """Clean up temporary directory if needed."""
@@ -99,24 +105,13 @@ def log_to_markdown_report(report_path: str, descriptions: List[Dict[str, str]],
     keyframe_descriptions = ""
     for desc in descriptions:
         keyframe_descriptions += f"### Frame: {desc['frame_path']}\n"
-        keyframe_descriptions += f"![Frame Image]({desc['frame_path']})\n"
+        image_name = Path(desc['frame_path']).name.replace(' ', '%20')
+        keyframe_descriptions += f"![Frame Image]({image_name})\n"
         keyframe_descriptions += f"Description: {desc['description']}\n\n"
 
     report_content = template.replace("{{keyframe_descriptions}}", keyframe_descriptions)
     with open(report_path, 'w') as report_file:
         report_file.write(report_content)
-
-def download_video_from_s3(s3_url: str, download_path: str):
-    """
-    Download video from S3 bucket to the specified local path.
-    """
-    s3 = boto3.client('s3')
-    bucket_name, key = s3_url.replace("s3://", "").split("/", 1)
-    try:
-        s3.download_file(bucket_name, key, download_path)
-        print(f"Downloaded {s3_url} to {download_path}")
-    except NoCredentialsError:
-        print("Credentials not available for AWS S3.")
 
 @click.group()
 def cli():
@@ -135,7 +130,7 @@ def process_video_openai(
     video_path, question, sample_freq, config_path, 
     cache_db_path, keep_temp_dir,
     record_top_k_frames, generate_report
-    ):
+):
     cfg = load_config(config_path)
     try:
         # Set up environment
@@ -145,7 +140,7 @@ def process_video_openai(
         # Extract frames and initialize processor
         frames = extract_frames(video_path, sample_freq, temp_dir)
         processor = OpenAIEmbeddingProcessor(
-            cfg["system_prompt"], cfg["vision_prompt_template"], cache_db_path)
+            cfg["system_prompt"], cfg["vision_prompt"], cache_db_path)
 
         # Process video
         process_video_with_processor(
