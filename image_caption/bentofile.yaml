@@ -1,4 +1,4 @@
-service: "app:video_analyzer_runner"
+service: "app:VideoAnalyzerService"
 labels:
   owner: user
   project: video-analyzer
@@ -12,3 +12,7 @@ python:
     - pillow
     - pydantic
     - opencv-python-headless
+    - bentoml
+docker:
+  env:
+    - PORT=8000

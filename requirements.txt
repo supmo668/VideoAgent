@@ -1,0 +1,7 @@
+torch
+transformers
+pillow
+pydantic
+opencv-python-headless
+bentoml
+reportlab
