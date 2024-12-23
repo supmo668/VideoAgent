@@ -3,9 +3,8 @@ import uuid
 from pathlib import Path
 from typing import List, Optional
 
-import uvicorn
-from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.responses import JSONResponse, FileResponse
+import bentoml
+from bentoml.io import JSON, File
 from pydantic import BaseModel
 
 from main import (
@@ -17,8 +16,6 @@ from main import (
     OpenAIEmbeddingProcessor
 )
 
-app = FastAPI(title="Video Analysis API")
-
 class VideoAnalysisRequest(BaseModel):
     video_path: str
     questions: List[str]
@@ -27,8 +24,13 @@ class VideoAnalysisRequest(BaseModel):
     record_top_k_frames: int = 20
     generate_report: bool = True
 
-@app.post("/analyze_video")
-async def analyze_video(request: VideoAnalysisRequest):
+video_analyzer_runner = bentoml.Service("video_analyzer", runners=[])
+
+@video_analyzer_runner.api(
+    input=JSON(pydantic_model=VideoAnalysisRequest),
+    output=JSON(),
+)
+def analyze_video(request: VideoAnalysisRequest):
     """
     Analyze a video by processing its frames against given questions 
     using either CLIP or OpenAI embedding models.
@@ -81,30 +83,21 @@ async def analyze_video(request: VideoAnalysisRequest):
             "frames_dir": str(temp_dir)
         }
         
-        return JSONResponse(content=results)
+        return results
     
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise bentoml.exceptions.BentoMLException(str(e))
 
-@app.get("/download_report")
-async def download_report(result_dir: str):
+@video_analyzer_runner.api(
+    input=JSON(),
+    output=File(),
+)
+def download_report(result_dir: str):
     """
     Download the generated markdown report.
     """
     report_path = Path(result_dir) / "workflow_report.md"
     if not report_path.exists():
-        raise HTTPException(status_code=404, detail="Report not found")
+        raise bentoml.exceptions.NotFound("Report not found")
     
-    return FileResponse(
-        path=report_path, 
-        media_type="text/markdown", 
-        filename="workflow_report.md"
-    )
-
-if __name__ == "__main__":
-    uvicorn.run(
-        "app:app", 
-        host="0.0.0.0", 
-        port=8000, 
-        reload=True
-    )
+    return report_path
