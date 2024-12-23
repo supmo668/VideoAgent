@@ -1,0 +1,14 @@
+service: "app:video_analyzer_runner"
+labels:
+  owner: user
+  project: video-analyzer
+include:
+  - "*.py"
+  - "config.yaml"
+python:
+  packages:
+    - torch
+    - transformers
+    - pillow
+    - pydantic
+    - opencv-python-headless
