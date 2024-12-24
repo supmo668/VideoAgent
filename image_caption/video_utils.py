@@ -2,7 +2,10 @@
 import os
 import cv2
 
-def extract_frames(video_path: str, sample_freq: int, output_dir: str):
+from typing import List, Tuple
+
+
+def extract_frames(video_path: str, sample_freq: int, output_dir: str) -> List[Tuple[int, str]]:
     if not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
 
@@ -20,6 +23,6 @@ def extract_frames(video_path: str, sample_freq: int, output_dir: str):
             cv2.imwrite(frame_path, frame)
             saved_frames.append((frame_id, frame_path))
         frame_count += 1
-
+    
     cap.release()
     return saved_frames

@@ -132,3 +132,28 @@ class ImageActionFrame(BaseModel):
                 }
             }
         }
+
+class VideoAnalysisRequest(BaseModel):
+    """
+    Request model for video analysis endpoints.
+    """
+    video_path: str = Field(..., description="Path to the video file to analyze")
+    questions: List[str] = Field(..., description="List of questions to analyze the video against")
+    model_type: str = Field(default="clip", description="Type of model to use (clip or openai)")
+    sample_freq: int = Field(default=30, description="Sampling frequency for video frames")
+    record_top_k_frames: int = Field(default=20, description="Number of top frames to record")
+    generate_report: bool = Field(default=True, description="Whether to generate analysis reports")
+
+class VideoAnalysisResponse(BaseModel):
+    """
+    Response model for video analysis results.
+    """
+    local_markdown: str = Field(..., description="Path to local markdown report")
+    local_html: str = Field(..., description="Path to local HTML report")
+    local_pdf: str = Field(..., description="Path to local PDF report")
+    s3_markdown: str = Field(..., description="Path to S3 markdown report")
+    s3_html: str = Field(..., description="Path to S3 HTML report")
+    s3_pdf: str = Field(..., description="Path to S3 PDF report")
+    key_frames: dict = Field(..., description="Dictionary mapping questions to key frame S3 URLs")
+    result_dir: str = Field(..., description="Directory containing all results")
+    frames_dir: str = Field(..., description="Directory containing extracted frames")
