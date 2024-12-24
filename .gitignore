@@ -4,5 +4,8 @@
 *.png
 *.jpg
 data/
+<<<<<<< HEAD
 results/
+=======
+>>>>>>> b7e392a5a492a73dad2e26d07dcd020370be049b
 .env

@@ -1,0 +1,85 @@
+{
+  "question": "Pouring water into red cabbage filled beaker",
+  "top_results": [
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000000.png",
+      "similarity": 0.40827492426187323
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000069.png",
+      "similarity": 0.40827492426187323
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000098.png",
+      "similarity": 0.40827492426187323
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000120.png",
+      "similarity": 0.40827492426187323
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000123.png",
+      "similarity": 0.40827492426187323
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000135.png",
+      "similarity": 0.40827492426187323
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000111.png",
+      "similarity": 0.40122604958855884
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000063.png",
+      "similarity": 0.3863701590078981
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000019.png",
+      "similarity": 0.35164103796237545
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000030.png",
+      "similarity": 0.35164103796237545
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000032.png",
+      "similarity": 0.35164103796237545
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000034.png",
+      "similarity": 0.35164103796237545
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000035.png",
+      "similarity": 0.35164103796237545
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000036.png",
+      "similarity": 0.35164103796237545
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000052.png",
+      "similarity": 0.35164103796237545
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000057.png",
+      "similarity": 0.35164103796237545
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000083.png",
+      "similarity": 0.35164103796237545
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000125.png",
+      "similarity": 0.35164103796237545
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000140.png",
+      "similarity": 0.35164103796237545
+    },
+    {
+      "frame_path": "../data/temp_frames-V1_end/frame_000106.png",
+      "similarity": 0.3515791087401451
+    }
+  ]
+}

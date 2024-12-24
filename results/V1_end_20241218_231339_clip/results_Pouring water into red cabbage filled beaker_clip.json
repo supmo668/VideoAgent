@@ -1,0 +1,85 @@
+{
+  "question": "Pouring water into red cabbage filled beaker",
+  "top_results": [
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000118.png",
+      "similarity": 0.2833172686163564
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000100.png",
+      "similarity": 0.25972609644751626
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000074.png",
+      "similarity": 0.24465993149202256
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000112.png",
+      "similarity": 0.2420949264153802
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000124.png",
+      "similarity": 0.24124244540137726
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000077.png",
+      "similarity": 0.24092834673832111
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000121.png",
+      "similarity": 0.24049546212589118
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000078.png",
+      "similarity": 0.23690565115656825
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000081.png",
+      "similarity": 0.23657024160046156
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000115.png",
+      "similarity": 0.23488600205787943
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000001.png",
+      "similarity": 0.23393896736090994
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000122.png",
+      "similarity": 0.23334693080591376
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000123.png",
+      "similarity": 0.2323024251893136
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000113.png",
+      "similarity": 0.2319478894275667
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000070.png",
+      "similarity": 0.23181342417153544
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000080.png",
+      "similarity": 0.23082841495052253
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000002.png",
+      "similarity": 0.2302920854784673
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000075.png",
+      "similarity": 0.22995482422248614
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000079.png",
+      "similarity": 0.22930811832109252
+    },
+    {
+      "frame_path": "temp_frames-V1_end-ba62429ed6094d54bb4402bc61147a78/frame_000114.png",
+      "similarity": 0.2282172903258827
+    }
+  ]
+}
