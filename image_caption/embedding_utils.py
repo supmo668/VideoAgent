@@ -4,7 +4,10 @@ import shutil
 from pathlib import Path
 from typing import List, Tuple, Dict, Any
 from tqdm import tqdm
+<<<<<<< HEAD
 import re
+=======
+>>>>>>> b7e392a5a492a73dad2e26d07dcd020370be049b
 
 from db_utils import init_cache_db, get_cached_embedding, save_embedding_to_cache
 from embed_utils import get_text_embedding_openai, get_frame_description
@@ -74,12 +77,20 @@ def process_frames_for_question(
     frames: List[Tuple[int, str]],
     question: str,
     processor: EmbeddingProcessor,
+<<<<<<< HEAD
 ) -> List[Tuple[str, float, int]]:
     """Process frames for a given question using the specified embedding processor.
     
     Returns a list of tuples, where the first element of the tuple is the file path to the frame,
     the second element is the cosine similarity between the frame embedding and the question embedding,
     and the third element is the frame number.
+=======
+) -> List[Tuple[str, float]]:
+    """Process frames for a given question using the specified embedding processor.
+    
+    Returns a list of tuples, where the first element of the tuple is the file path to the frame
+    and the second element is the cosine similarity between the frame embedding and the question embedding.
+>>>>>>> b7e392a5a492a73dad2e26d07dcd020370be049b
     """
     question_embedding = processor.get_text_embedding(question)
     similarities = []
@@ -87,12 +98,17 @@ def process_frames_for_question(
     for frame_number, frame_path in tqdm(frames, desc=f"Processing frames for question: {question}"):
         frame_embedding = processor.get_frame_embedding(frame_path)
         sim = cosine_similarity(question_embedding, frame_embedding)
+<<<<<<< HEAD
         similarities.append((frame_path, sim, frame_number))
+=======
+        similarities.append((frame_path, sim))
+>>>>>>> b7e392a5a492a73dad2e26d07dcd020370be049b
     
     similarities.sort(key=lambda x: x[1], reverse=True)
     return similarities
 
 def save_and_report_results(
+<<<<<<< HEAD
     similarities: List[Tuple[str, float, int]],
     question: str,
     result_dir: Path,
@@ -119,3 +135,37 @@ def save_and_report_results(
         json.dump({"question": question, "top_results": top_results}, f, indent=2)
 
     return str(key_frame_path), top_results
+=======
+    similarities: List[Tuple[str, float]],
+    question: str,
+    result_dir: Path,
+    record_top_k_frames: int,
+    model_type: str = ""
+) -> Tuple[str, List[Dict[str, Any]]]:
+    """Save results and report them to console."""
+
+    # Save top frame
+    key_frame_path = result_dir / f"top_key_frame_Q-{question[:10]}.png".replace(":", "")
+    if not key_frame_path.exists():
+        shutil.copy(
+            similarities[0][0], key_frame_path
+        )
+
+    # Ensure similarities are floats
+    top_results = [
+        {"frame_path": f, "similarity": s} for f, s in similarities[:record_top_k_frames]
+    ]
+    results_path = result_dir / f"results_{question}_{model_type}.json"
+    with open(results_path, 'w') as f:
+        json.dump({"question": question, "top_results": top_results}, f, indent=2)
+
+    # Print results
+    model_suffix = f" ({model_type})" if model_type else ""
+    print(f"Top ranked frames for question '{question}'{model_suffix} (path, similarity):")
+    for result in top_results:
+        print(f"{result['frame_path']}: {result['similarity']:.4f}")
+
+    print(f"Most relevant frame for question '{question}'{model_suffix} saved at {key_frame_path}")
+    print(f"Results for question '{question}' saved to {results_path}")
+    return key_frame_path, top_results
+>>>>>>> b7e392a5a492a73dad2e26d07dcd020370be049b

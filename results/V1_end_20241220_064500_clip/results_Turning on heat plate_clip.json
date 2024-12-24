@@ -1,0 +1,85 @@
+{
+  "question": "Turning on heat plate",
+  "top_results": [
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000132.png",
+      "similarity": 0.24437572770722765
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000115.png",
+      "similarity": 0.24125118168170906
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000006.png",
+      "similarity": 0.23544475080984856
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000007.png",
+      "similarity": 0.23542676885599284
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000140.png",
+      "similarity": 0.22682784844708184
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000010.png",
+      "similarity": 0.2260596164158857
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000104.png",
+      "similarity": 0.22352356921086614
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000084.png",
+      "similarity": 0.22156622944767626
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000082.png",
+      "similarity": 0.21890956569372236
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000109.png",
+      "similarity": 0.21734464464378433
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000086.png",
+      "similarity": 0.2166848637281637
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000085.png",
+      "similarity": 0.21581464269455022
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000027.png",
+      "similarity": 0.2148160367441703
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000020.png",
+      "similarity": 0.21481179753550422
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000116.png",
+      "similarity": 0.21453724092616278
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000108.png",
+      "similarity": 0.2141353577973427
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000058.png",
+      "similarity": 0.21389928543005532
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000023.png",
+      "similarity": 0.21326660186900187
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000091.png",
+      "similarity": 0.21295275142891995
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000070.png",
+      "similarity": 0.21276478202652963
+    }
+  ]
+}

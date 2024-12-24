@@ -1,0 +1,85 @@
+{
+  "question": "Pouring water into red cabbage filled beaker",
+  "top_results": [
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000118.png",
+      "similarity": 0.2833172935768538
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000100.png",
+      "similarity": 0.25972606692205835
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000074.png",
+      "similarity": 0.24465988018211002
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000112.png",
+      "similarity": 0.24209491173083142
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000124.png",
+      "similarity": 0.2412423919020265
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000077.png",
+      "similarity": 0.24092835535392018
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000121.png",
+      "similarity": 0.24049544753835983
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000078.png",
+      "similarity": 0.23690563678678098
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000081.png",
+      "similarity": 0.23657021911219517
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000115.png",
+      "similarity": 0.23488596643098703
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000001.png",
+      "similarity": 0.2339389531710703
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000122.png",
+      "similarity": 0.23334693140026494
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000123.png",
+      "similarity": 0.23230238833627476
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000113.png",
+      "similarity": 0.23194787535849828
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000070.png",
+      "similarity": 0.23181341011062312
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000080.png",
+      "similarity": 0.23082842350339075
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000002.png",
+      "similarity": 0.2302920492679211
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000075.png",
+      "similarity": 0.2299548102743093
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000079.png",
+      "similarity": 0.22930808169099812
+    },
+    {
+      "frame_path": "/workspace/VideoAgent/temp_frames-V1_end/frame_000114.png",
+      "similarity": 0.22821725406031212
+    }
+  ]
+}
