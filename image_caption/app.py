@@ -3,7 +3,6 @@ import uuid
 from pathlib import Path
 from typing import List, Optional
 
-from bentoml.io import NumpyNdarray, Multipart, Text
 from bentoml import service
 import bentoml
 
@@ -120,3 +119,6 @@ class VideoAnalyzerService:
             raise bentoml.exceptions.NotFound("HTML report not found")
         
         return str(html_report_path.read_text())
+
+# To start
+# bentoml serve app:VideoAnalyzerService --reload --port 8000
