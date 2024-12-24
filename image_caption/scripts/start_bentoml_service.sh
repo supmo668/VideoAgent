@@ -1,0 +1,1 @@
+bentoml serve app:VideoAnalyzerService  --port 8000

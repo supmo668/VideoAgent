@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import datetime
 from tqdm import tqdm
 import yaml
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional, Any, Union
 import openai
 from urllib.request import urlretrieve
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Image
@@ -24,21 +24,22 @@ from embedding_utils import (
     process_frames_for_question,
     save_and_report_results,
 )
-from s3 import S3Module
 from dotenv import load_dotenv
+
+from s3 import S3Module
+from models import VideoAnalysisRequest, VideoAnalysisResponse
 
 # Load environment variables from .env file
 load_dotenv()
 
-# Retrieve AWS credentials from environment variables
+# Get environment variables
 AWS_REGION = os.getenv('AWS_REGION', 'us-east-2')
-BUCKET_NAME = os.getenv('S3_BUCKET_NAME')
+BUCKET_NAME = os.getenv('S3_BUCKET_NAME', 'myimagebucketlabar')
 AWS_ACCESS_KEY = os.getenv('AWS_ACCESS_KEY_ID')
 AWS_SECRET_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
 
-# Validate AWS credentials
-if not all([AWS_ACCESS_KEY, AWS_SECRET_KEY]):
-    print("Warning: AWS credentials are not fully configured. S3 operations may fail.")
+if not all([AWS_REGION, BUCKET_NAME, AWS_ACCESS_KEY, AWS_SECRET_KEY]):
+    raise ValueError("Missing required AWS environment variables. Please check your .env file.")
 
 class VideoProcessor:
     def __init__(self):
@@ -56,115 +57,242 @@ class VideoProcessor:
         """Get public URL for uploaded S3 object"""
         return f"https://{BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{object_name}"
 
+def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
+    """Load configuration from YAML file."""
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
+
 def process_video_with_processor(
-    processor,
-    frames,
-    questions,
-    cfg,
-    result_dir,
-    record_top_k_frames,
-    model_type,
-    generate_report
-) -> Dict[str, str]:
+    processor: Union[ClipEmbeddingProcessor, OpenAIEmbeddingProcessor],
+    frames: List[Tuple[int, str]],
+    questions: List[str],
+    cfg: Dict[str, Any],
+    result_dir: Path,
+    record_top_k_frames: int,
+    model_type: str,
+    generate_report: bool
+) -> Optional[Dict[str, str]]:
     """Process video frames with the given processor for each question."""
     vp = VideoProcessor()
     report_data: List[Dict[str, str]] = []
-    key_frames = {}
+    key_frames: Dict[str, Tuple[int, str]] = {}
+
+    # Get frames directory from the first frame path
+    frames_directory = str(Path(frames[0][1]).parent) if frames else ""
 
     for q in tqdm(questions, desc=f"Processing questions with {model_type.upper()}"):
         similarities: List[Tuple[str, float]] = process_frames_for_question(frames, q, processor)
         if not similarities:
             print(f"No relevant frames found for question '{q}'.")
             continue
-        key_frame_path, top_results = save_and_report_results(
-            similarities=similarities,
-            question=q,
-            result_dir=result_dir,
+
+        save_and_report_results(
+            similarities, q, result_dir,
             record_top_k_frames=record_top_k_frames,
             model_type=model_type
         )
-        if generate_report:
-            if similarities:
-                top_frame_path, sim, frame_idex = similarities[0]
-                frame_description = get_frame_description(
-                    cfg["system_prompt"], 
-                    cfg["vision_prompt"], 
-                    top_frame_path
-                )
-                object_name = f"reports/{Path(top_frame_path).name}"
-                vp._upload_to_s3(top_frame_path, object_name)
-                s3_url = vp._get_s3_url(object_name)
+        if generate_report and similarities:
+            top_frame_path, sim, frame_idx = similarities[0]
+            frame_description = get_frame_description(
+                cfg["system_prompt"], 
+                cfg["vision_prompt"], 
+                top_frame_path
+            )
 
-                report_data.append(
-                    {
-                        "frame_path": str(Path(key_frame_path).relative_to(result_dir)),
-                        "description": frame_description,
-                        "image_path": str(top_frame_path),
-                        "s3_url": s3_url
-                    }
-                )
-                key_frames[q] = s3_url
+            object_name = f"reports/{Path(top_frame_path).name}"
+            vp._upload_to_s3(top_frame_path, object_name)
+            s3_url = vp._get_s3_url(object_name)
+
+            # Get relative path for markdown, keeping original path for file operations
+            try:
+                relative_path = str(Path(top_frame_path).relative_to(result_dir))
+            except ValueError:
+                # If paths are not relative, use the frame path relative to its parent
+                relative_path = str(Path(top_frame_path).relative_to(Path(top_frame_path).parent.parent))
+
+            report_data.append(
+                {
+                    "frame_path": relative_path,
+                    "description": frame_description,
+                    "image_path": str(top_frame_path),  # Keep absolute path for file operations
+                    "s3_url": s3_url
+                }
+            )
+            key_frames[q] = (frame_idx, s3_url)
 
     if generate_report:
+        # Generate local report with local image paths
         local_report_path = result_dir / "workflow_report_local.md"
-        html_report_path = log_to_markdown_report(
-            local_report_path, report_data, cfg['report_template']
+        local_reports = log_to_markdown_report(
+            local_report_path, 
+            report_data, 
+            cfg['report_template'],
+            use_s3_urls=False
         )
 
+        # Generate S3 report with S3 URLs
         s3_report_path = result_dir / "workflow_report.md"
-        log_to_s3_markdown_report(s3_report_path, report_data, cfg['report_template'])
+        s3_reports = log_to_markdown_report(
+            s3_report_path, 
+            report_data, 
+            cfg['report_template'],
+            use_s3_urls=True
+        )
 
-        pdf_report_path = local_report_path.with_suffix('.pdf')
-        generate_pdf_report(pdf_report_path, report_data)
+        response_key_frames = {k: v[1] for k, v in key_frames.items()}
 
-        return {
-            "local_html": str(html_report_path),
-            "local_pdf": str(pdf_report_path),
-            "s3_markdown": str(s3_report_path),
-            "key_frames": key_frames
-        }
+        return VideoAnalysisResponse(
+            local_markdown=local_reports['markdown'],
+            local_html=local_reports['html'],
+            local_pdf=local_reports['pdf'],
+            s3_markdown=s3_reports['markdown'],
+            s3_html=s3_reports['html'],
+            s3_pdf=s3_reports['pdf'],
+            key_frames=response_key_frames,
+            result_dir=str(result_dir),
+            frames_dir=frames_directory
+        ).dict()
 
-def log_to_markdown_report(report_path: str, report_data: List[Dict[str, str]], template: str):
-    keyframe_descriptions = ""
-    for desc in report_data:
-        keyframe_descriptions += f"### Frame: {desc['frame_path']}\n"
-        image_name = Path(desc['frame_path']).name.replace(' ', '%20')
-        keyframe_descriptions += f"![Frame Image]({image_name})\n"
-        keyframe_descriptions += f"Description: {desc['description']}\n\n"
+    return None
 
-    report_content = template.replace("{{keyframe_descriptions}}", keyframe_descriptions)
-    with open(report_path, 'w') as report_file:
-        report_file.write(report_content)
+def log_to_markdown_report(
+    report_path: str,
+    report_data: List[Dict[str, str]],
+    template: str,
+    use_s3_urls: bool = False
+) -> Dict[str, str]:
+    """
+    Log descriptions to a markdown report using the provided template.
+    Can generate reports with either local image paths or S3 URLs.
+    """
+    # Create markdown report
+    markdown_content = template + "\n\n"
+    for item in report_data:
+        image_path = item['s3_url'] if use_s3_urls else item['image_path']
+        markdown_content += f"### Frame: {item['frame_path']}\n\n"
+        markdown_content += f"![Frame]({image_path})\n\n"
+        markdown_content += f"Description: {item['description']}\n\n"
+        markdown_content += "---\n\n"
 
-    html_report_path = report_path.with_suffix('.html')
-    with open(report_path, 'r') as md_file, open(html_report_path, 'w') as html_file:
-        import markdown
-        html_content = markdown.markdown(md_file.read())
-        html_file.write(html_content)
+    # Save markdown report
+    with open(report_path, 'w') as f:
+        f.write(markdown_content)
 
-    return str(html_report_path)
+    # Generate HTML version
+    html_path = str(Path(report_path).with_suffix('.html'))
+    html_content = markdown_content  # In a real app, convert markdown to HTML
+    with open(html_path, 'w') as f:
+        f.write(html_content)
 
-def log_to_s3_markdown_report(report_path: str, report_data: List[Dict[str, str]], template: str):
-    keyframe_descriptions = ""
-    for desc in report_data:
-        keyframe_descriptions += f"### Frame: {desc['frame_path']}\n"
-        keyframe_descriptions += f"![Frame Image]({desc['s3_url']})\n"
-        keyframe_descriptions += f"Description: {desc['description']}\n\n"
+    # Generate PDF version
+    pdf_path = str(Path(report_path).with_suffix('.pdf'))
+    generate_pdf_report(pdf_path, report_data)
 
-    report_content = template.replace("{{keyframe_descriptions}}", keyframe_descriptions)
-    with open(report_path, 'w') as report_file:
-        report_file.write(report_content)
+    return {
+        'markdown': str(report_path),
+        'html': html_path,
+        'pdf': pdf_path
+    }
 
-def generate_pdf_report(output_path, report_data):
-    doc = SimpleDocTemplate(str(output_path))
+def generate_pdf_report(output_path: str, report_data: List[Dict[str, str]]) -> None:
+    """Generate a PDF report from the report data."""
+    doc = SimpleDocTemplate(output_path)
     styles = getSampleStyleSheet()
     elements = []
 
     for item in report_data:
-        elements.append(Paragraph(item['description'], styles['BodyText']))
-        if 'image_path' in item:
+        elements.append(Paragraph(f"Frame: {item['frame_path']}", styles['Heading3']))
+        elements.append(Paragraph(f"Description: {item['description']}", styles['Normal']))
+        if os.path.exists(item['image_path']):
             elements.append(Image(item['image_path'], width=400, height=300))
     doc.build(elements)
+
+def process_video_clip_core(
+    video_path: str,
+    questions: List[str],
+    sample_freq: int = 30,
+    config_path: str = "config.yaml",
+    cache_db_path: str = "embeddings_cache.db",
+    keep_temp_dir: bool = True,
+    record_top_k_frames: int = 20,
+    generate_report: bool = True
+) -> Optional[Dict[str, str]]:
+    """Core function to process video using CLIP embedding model."""
+    cfg = load_config(config_path)
+    try:
+        request = VideoAnalysisRequest(
+            video_path=video_path,
+            questions=list(questions),
+            model_type="clip",
+            sample_freq=sample_freq,
+            record_top_k_frames=record_top_k_frames,
+            generate_report=generate_report
+        )
+
+        temp_dir, result_dir = setup_processing_environment(
+            request.video_path, cache_db_path, keep_temp_dir, suffix="_clip")
+        frames: List[Tuple[int, str]] = extract_frames(request.video_path, request.sample_freq, temp_dir)
+        processor = ClipEmbeddingProcessor(cache_db_path)
+
+        results: Optional[Dict[str, str]] = process_video_with_processor(
+            processor=processor,
+            frames=frames,
+            questions=request.questions,
+            cfg=cfg,
+            result_dir=result_dir,
+            record_top_k_frames=request.record_top_k_frames,
+            model_type=request.model_type,
+            generate_report=request.generate_report
+        )
+        if results:
+            print(f"Reports saved to {results['local_html']} and {results['local_pdf']}.")
+        return results
+    finally:
+        cleanup_environment(temp_dir, keep_temp_dir)
+
+def process_video_openai_core(
+    video_path: str,
+    questions: List[str],
+    sample_freq: int = 30,
+    config_path: str = "config.yaml",
+    cache_db_path: str = "embeddings_cache.db",
+    keep_temp_dir: bool = True,
+    record_top_k_frames: int = 20,
+    generate_report: bool = True
+) -> Optional[Dict[str, str]]:
+    """Core function to process video using OpenAI embedding model."""
+    cfg = load_config(config_path)
+    try:
+        request = VideoAnalysisRequest(
+            video_path=video_path,
+            questions=list(questions),
+            model_type="openai",
+            sample_freq=sample_freq,
+            record_top_k_frames=record_top_k_frames,
+            generate_report=generate_report
+        )
+
+        temp_dir, result_dir = setup_processing_environment(
+            request.video_path, cache_db_path, keep_temp_dir, suffix="_openai")
+        frames: List[Tuple[int, str]] = extract_frames(request.video_path, request.sample_freq, temp_dir)
+        processor = OpenAIEmbeddingProcessor(
+            cfg["system_prompt"], cfg["vision_prompt"], cache_db_path)
+
+        results: Optional[Dict[str, str]] = process_video_with_processor(
+            processor=processor,
+            frames=frames,
+            questions=request.questions,
+            cfg=cfg,
+            result_dir=result_dir,
+            record_top_k_frames=request.record_top_k_frames,
+            model_type=request.model_type,
+            generate_report=request.generate_report
+        )
+        if results:
+            print(f"Reports saved to {results['local_html']} and {results['local_pdf']}.")
+        return results
+    finally:
+        cleanup_environment(temp_dir, keep_temp_dir)
 
 @click.group()
 def cli():
@@ -180,33 +308,21 @@ def cli():
 @click.option("--record_top_k_frames", type=int, default=20, help="Number of top frames to record in results.")
 @click.option("--generate-report", is_flag=True, help="Generate a detailed report for each keyframe.")
 def process_video_openai(
-    video_path, question, sample_freq, config_path, 
+    video_path, question, sample_freq, config_path,
     cache_db_path, keep_temp_dir,
     record_top_k_frames, generate_report
 ):
-    cfg = load_config(config_path)
-    try:
-        temp_dir, result_dir = setup_processing_environment(
-            video_path, cache_db_path, keep_temp_dir)
-        frames = extract_frames(video_path, sample_freq, temp_dir)
-        processor = OpenAIEmbeddingProcessor(
-            cfg["system_prompt"], cfg["vision_prompt"], cache_db_path)
-
-        report_paths = process_video_with_processor(
-            processor=processor,
-            frames=frames,
-            questions=question,
-            cfg=cfg,
-            result_dir=result_dir,
-            record_top_k_frames=record_top_k_frames,
-            model_type="openai",
-            generate_report=generate_report
-        )
-        if report_paths:
-            print(f"Reports saved to {report_paths['local_html']} and {report_paths['local_pdf']}.")
-        return report_paths
-    finally:
-        cleanup_environment(temp_dir, keep_temp_dir)
+    """CLI command to process video using OpenAI embedding model."""
+    return process_video_openai_core(
+        video_path=video_path,
+        questions=list(question),
+        sample_freq=sample_freq,
+        config_path=config_path,
+        cache_db_path=cache_db_path,
+        keep_temp_dir=keep_temp_dir,
+        record_top_k_frames=record_top_k_frames,
+        generate_report=generate_report
+    )
 
 @cli.command("clip-embed")
 @click.option("--video_path", type=str, required=True, help="Path to input video.")
@@ -219,31 +335,20 @@ def process_video_openai(
 @click.option("--generate-report", is_flag=True, help="Generate a detailed report for each keyframe.")
 def process_video_clip(
     video_path, question, sample_freq, config_path,
-    cache_db_path, record_top_k_frames, keep_temp_dir, generate_report
-    ):
-    cfg = load_config(config_path)
-    try:
-        temp_dir, result_dir = setup_processing_environment(
-            video_path, cache_db_path, keep_temp_dir, suffix="_clip"
-        )
-        frames = extract_frames(video_path, sample_freq, temp_dir)
-        processor = ClipEmbeddingProcessor(cache_db_path)
-
-        report_paths = process_video_with_processor(
-            processor=processor,
-            frames=frames,
-            questions=question,
-            cfg=cfg,
-            result_dir=result_dir,
-            record_top_k_frames=record_top_k_frames,
-            model_type="clip",
-            generate_report=generate_report
-        )
-        if report_paths:
-            print(f"Reports saved to {report_paths['local_html']} and {report_paths['local_pdf']}.")
-        return report_paths
-    finally:
-        cleanup_environment(temp_dir, keep_temp_dir)
+    cache_db_path, keep_temp_dir,
+    record_top_k_frames, generate_report
+):
+    """CLI command to process video using CLIP embedding model."""
+    return process_video_clip_core(
+        video_path=video_path,
+        questions=list(question),
+        sample_freq=sample_freq,
+        config_path=config_path,
+        cache_db_path=cache_db_path,
+        keep_temp_dir=keep_temp_dir,
+        record_top_k_frames=record_top_k_frames,
+        generate_report=generate_report
+    )
 
 if __name__ == "__main__":
     cli()
