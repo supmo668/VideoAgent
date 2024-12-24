@@ -1,5 +1,4 @@
 import yaml
-<<<<<<< HEAD
 import os
 import shutil
 from pathlib import Path
@@ -9,16 +8,11 @@ from dotenv import load_dotenv
 from db_utils import init_cache_db
 from urllib.request import urlretrieve
 
-=======
-
-from dotenv import load_dotenv
->>>>>>> b7e392a5a492a73dad2e26d07dcd020370be049b
 load_dotenv()
 
 def load_config(config_path: str):
     with open(config_path, 'r') as f:
         cfg = yaml.safe_load(f)
-<<<<<<< HEAD
     return cfg
 
 
@@ -55,6 +49,3 @@ def cleanup_environment(temp_dir, keep_temp_dir):
     """Clean up temporary directory if needed."""
     if not keep_temp_dir:
         shutil.rmtree(temp_dir)
-=======
-    return cfg
->>>>>>> b7e392a5a492a73dad2e26d07dcd020370be049b
