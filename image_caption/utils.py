@@ -34,8 +34,11 @@ def setup_processing_environment(
         video_name = Path(video_path).stem
         local_video_path = temp_dir / video_name
         if not local_video_path.exists():
-            urlretrieve(video_path, str(local_video_path))
-            video_path = str(local_video_path)
+            try:
+                urlretrieve(video_path, str(local_video_path))
+                video_path = str(local_video_path)
+            except:
+                raise ValueError(f"Failed to download video from URL: {video_path}")
     
     # Create result directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

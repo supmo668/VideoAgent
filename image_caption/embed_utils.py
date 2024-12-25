@@ -1,9 +1,12 @@
 # openai_utils.py
+import os
+
 import numpy as np
 from openai import OpenAI
 
 # Initialize OpenAI client once
-client = OpenAI()
+assert os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 from langchain.output_parsers import PydanticOutputParser
 from models import ImageActionFrame, BioAllowableActionTypes
@@ -17,33 +20,66 @@ def get_text_embedding_openai(text: str, model: str = "text-embedding-3-small") 
     embedding = response.data[0].embedding
     return np.array(embedding, dtype=np.float32)
 
-def get_frame_description(
-    system_prompt: str, vision_prompt_template: str, image_path: str) -> str:
+def get_frame_description(system_prompt: str, vision_prompt: str, frame_path: str) -> str:
     """
-    Get a structured description of a video frame using GPT-4 Vision and parse it into an ImageActionFrame.
+    Get a description of an image frame using GPT-4 Vision API.
+    
+    Args:
+        system_prompt: System prompt for GPT-4 Vision
+        vision_prompt: Vision prompt for GPT-4 Vision
+        frame_path: Path to the image frame
+        
+    Returns:
+        str: Description of the image frame
     """
-    parser = PydanticOutputParser(pydantic_object=ImageActionFrame)
-    format_instructions = parser.get_format_instructions()
-    
-    user_prompt = vision_prompt_template.format(
-        image_path=image_path, format_instruction=format_instructions)
-    
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        temperature=0.1,
-        max_tokens=1000
-    )
-    
     try:
-        frame_info = parser.parse(response.choices[0].message.content.strip())
-        return frame_info.action_description
-    except Exception as e:
-        print(f"Warning: Failed to parse response into ImageActionFrame: {e}")
+        import openai
+        
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",  # Using the preview model as it's the current version
+            messages=[
+                {
+                    "role": "system",
+                    "content": system_prompt or "You are an AI that generates descriptions for images."
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": vision_prompt or "Describe this image."
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{encode_image(frame_path)}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=300
+        )
         return response.choices[0].message.content.strip()
+        
+    except Exception as e:
+        print(f"Error getting frame description: {str(e)}")
+        return f"Error processing frame: {str(e)}"
+
+def encode_image(image_path: str) -> str:
+    """
+    Encode an image file to base64.
+    
+    Args:
+        image_path: Path to the image file
+        
+    Returns:
+        str: Base64 encoded image
+    """
+    import base64
+    
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
 
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     norm_a = a / np.linalg.norm(a)

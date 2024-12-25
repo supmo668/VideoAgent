@@ -138,9 +138,9 @@ class VideoAnalysisRequest(BaseModel):
     Request model for video analysis endpoints.
     """
     video_path: str = Field(..., description="Path to the video file to analyze")
-    questions: List[str] = Field(..., description="List of questions to analyze the video against")
+    user_descs: List[str] = Field(..., description="List of questions to analyze the video against")
     model_type: str = Field(default="clip", description="Type of model to use (clip or openai)")
-    sample_freq: int = Field(default=30, description="Sampling frequency for video frames")
+    fps: float = Field(default=2.0, description="Target frames per second for extraction")
     record_top_k_frames: int = Field(default=20, description="Number of top frames to record")
     generate_report: bool = Field(default=True, description="Whether to generate analysis reports")
 
@@ -155,5 +155,6 @@ class VideoAnalysisResponse(BaseModel):
     s3_html: str = Field(..., description="Path to S3 HTML report")
     s3_pdf: str = Field(..., description="Path to S3 PDF report")
     key_frames: dict = Field(..., description="Dictionary mapping questions to key frame S3 URLs")
+    frame_descriptions: Dict[str, Optional[str]] = Field(..., description="Dictionary mapping questions to frame descriptions")
     result_dir: str = Field(..., description="Directory containing all results")
     frames_dir: str = Field(..., description="Directory containing extracted frames")
