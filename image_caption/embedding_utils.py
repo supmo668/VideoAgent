@@ -43,6 +43,7 @@ class OpenAIEmbeddingProcessor(EmbeddingProcessor):
             self.vision_prompt_template, 
             frame_path
         )
+        return self.frame_desc
         
     def get_frame_embedding(self, frame_path: str) -> Any:
         video_path = str(Path(frame_path).parent.parent)
@@ -105,8 +106,6 @@ def save_and_report_results(
     record_top_k_frames: int,
     model_type: str
 ) -> Tuple[str, List[Dict[str, Any]]]:
-    model_type: str
-) -> Tuple[str, List[Dict[str, Any]]]:
     """Save results and report them to console."""
 
     # Sanitize the user_desc to create a valid filename
@@ -117,16 +116,13 @@ def save_and_report_results(
     if not key_frame_path.exists():
         shutil.copy(
             top_frame_path, key_frame_path
-            top_frame_path, key_frame_path
         )
 
     top_results = [
-        {"frame_path": f, "similarity": s, "frame_number": n} for f, s, n in similarities[:record_top_k_frames]
         {"frame_path": f, "similarity": s, "frame_number": n} for f, s, n in similarities[:record_top_k_frames]
     ]
     results_path = result_dir / f"results_{safe_user_desc}_{model_type}.json"
     with open(results_path, 'w') as f:
         json.dump({"user_desc": user_desc, "top_results": top_results}, f, indent=2)
 
-    return str(key_frame_path), top_results
     return str(key_frame_path), top_results

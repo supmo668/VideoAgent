@@ -220,12 +220,6 @@ def log_to_markdown_report(
     template: str,
     use_s3_urls: bool = False
 ) -> Dict[str, str]:
-def log_to_markdown_report(
-    report_path: str,
-    report_data: List[Dict[str, str]],
-    template: str,
-    use_s3_urls: bool = False
-) -> Dict[str, str]:
     """
     Log descriptions to a markdown report using the provided template.
     Can generate reports with either local image paths or S3 URLs.
