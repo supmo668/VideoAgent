@@ -6,3 +6,4 @@
 data/
 results/
 .env
+temp_frames*
