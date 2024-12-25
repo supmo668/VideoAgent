@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Tuple, Dict, Any
 from tqdm import tqdm
 import re
+import re
 
 from db_utils import init_cache_db, get_cached_embedding, save_embedding_to_cache
 from embed_utils import get_text_embedding_openai, get_frame_description
@@ -104,6 +105,8 @@ def save_and_report_results(
     record_top_k_frames: int,
     model_type: str
 ) -> Tuple[str, List[Dict[str, Any]]]:
+    model_type: str
+) -> Tuple[str, List[Dict[str, Any]]]:
     """Save results and report them to console."""
 
     # Sanitize the user_desc to create a valid filename
@@ -114,13 +117,16 @@ def save_and_report_results(
     if not key_frame_path.exists():
         shutil.copy(
             top_frame_path, key_frame_path
+            top_frame_path, key_frame_path
         )
 
     top_results = [
+        {"frame_path": f, "similarity": s, "frame_number": n} for f, s, n in similarities[:record_top_k_frames]
         {"frame_path": f, "similarity": s, "frame_number": n} for f, s, n in similarities[:record_top_k_frames]
     ]
     results_path = result_dir / f"results_{safe_user_desc}_{model_type}.json"
     with open(results_path, 'w') as f:
         json.dump({"user_desc": user_desc, "top_results": top_results}, f, indent=2)
 
+    return str(key_frame_path), top_results
     return str(key_frame_path), top_results

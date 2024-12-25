@@ -9,11 +9,16 @@ from datetime import datetime
 from tqdm import tqdm
 import yaml
 from typing import List, Dict, Tuple, Optional, Any, Union
+from typing import List, Dict, Tuple, Optional, Any, Union
 import openai
 from urllib.request import urlretrieve
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Image
 from reportlab.lib.styles import getSampleStyleSheet
+from urllib.request import urlretrieve
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Image
+from reportlab.lib.styles import getSampleStyleSheet
 
+from utils import load_config, setup_processing_environment, cleanup_environment
 from utils import load_config, setup_processing_environment, cleanup_environment
 from db_utils import init_cache_db, get_cached_embedding, save_embedding_to_cache
 from video_utils import extract_frames
@@ -209,6 +214,12 @@ def process_video_with_processor(
             print(f"Error saving error JSON: {str(e2)}")
         raise
 
+def log_to_markdown_report(
+    report_path: str,
+    report_data: List[Dict[str, str]],
+    template: str,
+    use_s3_urls: bool = False
+) -> Dict[str, str]:
 def log_to_markdown_report(
     report_path: str,
     report_data: List[Dict[str, str]],
