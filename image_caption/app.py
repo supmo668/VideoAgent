@@ -36,14 +36,14 @@ class VideoAnalyzerService:
     async def analyze_video(
         self,
         video_path: str = Field(...),
-        questions: List[str] = Field(...),
+        descriptions: List[str] = Field(...),
         model_type: str = Field(default="clip"),
-        sample_freq: int = Field(default=30),
+        fps: int = Field(default=30),
         record_top_k_frames: int = Field(default=20),
         generate_report: bool = Field(default=True)
     ) -> VideoAnalysisResponse:
         """
-        Analyze a video by processing its frames against given questions 
+        Analyze a video by processing its frames against given descriptions 
         using either CLIP or OpenAI embedding models.
         """
         try:
@@ -51,16 +51,16 @@ class VideoAnalyzerService:
             if model_type.lower() == "openai":
                 results = process_video_openai_core(
                     video_path=video_path,
-                    questions=questions,
-                    sample_freq=sample_freq,
+                    user_descs=descriptions,
+                    fps=fps,
                     record_top_k_frames=record_top_k_frames,
                     generate_report=generate_report
                 )
             else:
                 results = process_video_clip_core(
                     video_path=video_path,
-                    questions=questions,
-                    sample_freq=sample_freq,
+                    user_descs=descriptions,
+                    fps=fps,
                     record_top_k_frames=record_top_k_frames,
                     generate_report=generate_report
                 )

@@ -11,7 +11,9 @@ def get_sample_freq(fps: float) -> int:
     """
     if fps <= 2:
         return 1
-    return int(fps)
+    elif fps > 2 and fps <= 10:
+        return int(fps/2)
+    return int(2)
 
 
 def extract_frames(video_path: str, output_dir: str, fps: float = 2.0) -> List[Tuple[int, str]]:

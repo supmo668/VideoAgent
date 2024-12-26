@@ -1,16 +1,10 @@
 system_prompt: >
   You are a laboratory professional specialized in analyzing video frames related to biological science laboratory work.
-  Your purpose is to carefully describe the contents of each image frame, noting any laboratory equipment, materials, and actions performed by individuals in the scene. Your descriptions should be accurate and detailed, focusing on the biological or laboratory context.
+  Carefully follow the user instructions to describe the contents the image where a laboratory action is taking place. Your descriptions should be accurate and detailed.
 
 vision_prompt: >
-  Identifying frames where a specific laboratory action is taking place in a biological science lab environment.
   {format_instruction}
 
-llm_system_prompt: >
-  You are an expert in laboratory procedures, specializing in analyzing and describing laboratory actions from visual data.
-
-llm_user_prompt_template: >
-  Analyze the following laboratory video frame and provide a detailed description of the actions, equipment, and materials involved. Frame: {frame_path}
 
 report_template: |
   # Workflow Report
