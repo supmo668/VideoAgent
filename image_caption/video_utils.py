@@ -5,16 +5,20 @@ from tqdm import tqdm
 from typing import List, Tuple
 
 
-def get_sample_freq(fps: float) -> int:
-    """Determine sample frequency based on video FPS.
-    If FPS <= 2, sample every frame. Otherwise, sample at FPS rate.
+def get_sample_freq(fps: float, n_frames: int) -> int:
+    """Determine sample frequency based on video FPS and total frames.
+    Adjust sampling to balance performance and frame extraction.
     """
-    if fps <= 2:
+    if n_frames <= 20:
         return 1
-    elif fps > 2 and fps <= 10:
-        return int(fps/2)
-    return int(2)
-
+    elif fps <= 2:
+        return 1
+    elif fps <= 10:
+        return max(1, int(fps / 2))
+    elif n_frames <= 100:
+        return max(1, int(fps / 1.5))
+    else:
+        return max(1, int(fps)*max(1, n_frames//1000))
 
 def extract_frames(video_path: str, output_dir: str, fps: float = 2.0) -> List[Tuple[int, str]]:
     if not os.path.exists(output_dir):
@@ -22,7 +26,7 @@ def extract_frames(video_path: str, output_dir: str, fps: float = 2.0) -> List[T
 
     cap = cv2.VideoCapture(video_path)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    sample_freq = get_sample_freq(fps)
+    sample_freq = get_sample_freq(fps, total_frames)
     
     print(f"Total frames in video: {total_frames}")
     print(f"Target FPS: {fps}")

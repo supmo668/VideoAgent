@@ -34,7 +34,8 @@ def get_frame_description(system_prompt: str, vision_prompt: str, frame_path: st
     """
     try:
         import openai
-        
+        parser = PydanticOutputParser(pydantic_object=ImageActionFrame)
+        vision_description_prompt = vision_prompt.format(format_instruction=parser.get_format_instructions()) or "Describe this image."
         response = client.chat.completions.create(
             model="gpt-4o-mini",  # Using the preview model as it's the current version
             messages=[
@@ -47,7 +48,7 @@ def get_frame_description(system_prompt: str, vision_prompt: str, frame_path: st
                     "content": [
                         {
                             "type": "text",
-                            "text": vision_prompt or "Describe this image."
+                            "text": vision_description_prompt
                         },
                         {
                             "type": "image_url",

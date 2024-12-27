@@ -158,3 +158,13 @@ class VideoAnalysisResponse(BaseModel):
     frame_descriptions: Dict[str, Optional[str]] = Field(..., description="Dictionary mapping questions to frame descriptions")
     result_dir: str = Field(..., description="Directory containing all results")
     frames_dir: str = Field(..., description="Directory containing extracted frames")
+    
+class SummarizeRequest(BaseModel):
+    video_path: str = Field(..., description="Path or URL to the input video file")
+    fps: float = Field(2.0, description="Frames per second to extract from the video")
+    config_path: str = Field("config.yaml", description="Path to the configuration file")
+    cache_db_path: str = Field("embeddings_cache.db", description="Path to the embeddings cache database")
+
+class SummarizeResponse(BaseModel):
+    title: str
+    summary: str

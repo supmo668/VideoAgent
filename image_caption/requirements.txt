@@ -15,3 +15,6 @@ uvicorn>=0.22.0
 pydantic>=2.0.0
 bentoml
 reportlab
+langchain
+langgraph
+langchain_openai

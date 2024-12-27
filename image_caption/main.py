@@ -9,16 +9,12 @@ from datetime import datetime
 from tqdm import tqdm
 import yaml
 from typing import List, Dict, Tuple, Optional, Any, Union
-from typing import List, Dict, Tuple, Optional, Any, Union
+
 import openai
 from urllib.request import urlretrieve
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Image
 from reportlab.lib.styles import getSampleStyleSheet
-from urllib.request import urlretrieve
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Image
-from reportlab.lib.styles import getSampleStyleSheet
 
-from utils import load_config, setup_processing_environment, cleanup_environment
 from utils import load_config, setup_processing_environment, cleanup_environment
 from db_utils import init_cache_db, get_cached_embedding, save_embedding_to_cache
 from video_utils import extract_frames
@@ -29,6 +25,7 @@ from embedding_utils import (
     process_frames_for_comparison,
     save_and_report_results,
 )
+from summarization_utils import app, summarize_and_generate_title_async
 from dotenv import load_dotenv
 
 from s3 import S3Module
@@ -67,6 +64,60 @@ def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 
+async def process_and_summarize_video(
+    video_path: str,
+    fps: int = 60,
+    keep_temp_dir: bool = False,
+    config_path: str = "config.yaml",
+    cache_db_path: str = "embeddings_cache.db"
+) -> Optional[dict]:
+    """
+    Process a video by extracting frames, getting frame descriptions, and summarizing the content.
+
+    Args:
+        video_path (str): Path to the input video file.
+        fps (float): Frames per second to extract from the video.
+        config_path (str): Path to the configuration file.
+        cache_db_path (str): Path to the embeddings cache database.
+
+    Returns:
+        Optional[dict]: A dictionary containing the summary and title, or None if processing fails.
+    """
+    temp_dir, result_dir = setup_processing_environment(
+        video_path, cache_db_path, keep_temp_dir, suffix="_summary")
+    try:
+        # Load configuration
+        with open(config_path, 'r') as file:
+            cfg = yaml.safe_load(file)
+        frames: List[Tuple[int, str]] = extract_frames(video_path, temp_dir, fps)
+
+        # Initialize OpenAIEmbeddingProcessor
+        processor = OpenAIEmbeddingProcessor(
+            cfg["system_prompt"], cfg["vision_prompt"], cache_db_path
+        )
+
+        # Get frame descriptions
+        frame_descriptions: List[str] = []
+        for _, frame_path in frames:
+            description = processor.get_frame_description(frame_path)
+            frame_descriptions.append(description)
+
+        # Summarize and generate title
+        result = await summarize_and_generate_title_async(frame_descriptions)
+
+        return {
+            "summary": result["abstract"],
+            "title": result["title"]
+        }
+
+    except Exception as e:
+        print(f"Error processing video: {str(e)}")
+        return None
+    finally:
+        # Clean up temporary directory
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir)
+            
 def process_video_with_processor(
     processor: Union[ClipEmbeddingProcessor, OpenAIEmbeddingProcessor],
     frames: List[Tuple[int, str]],
@@ -415,6 +466,35 @@ def process_video_openai(
         generate_report=generate_report
     )
 
+@cli.command(name="summarize")
+@click.option("--video_path", required=True, help="Path to input video file")
+@click.option("--fps", type=float, default=30, help="Target frames per second for extraction")
+@click.option("--keep-temp-dir", is_flag=False, help="Keep temporary directory after processing")
+@click.option("--config_path", default="config.yaml", help="Path to config file")
+@click.option("--cache_db_path", default="embeddings_cache.db", help="Path to embeddings cache database")
+def summarize_video(
+    video_path: str,
+    fps: float,
+    keep_temp_dir: bool,
+    config_path: str,
+    cache_db_path: str
+):
+    """Process video and generate summary."""
+    import asyncio
+    async def run():
+        result = await process_and_summarize_video(
+            video_path=video_path,
+            fps=fps,
+            config_path=config_path,
+            cache_db_path=cache_db_path
+        )
+        if result:
+            click.echo(f"Title: {result['title']}")
+            click.echo(f"Summary: {result['summary']}")
+        else:
+            click.echo("Video processing failed.")
+    asyncio.run(run())
+    
 if __name__ == "__main__":
     cli()
     # run openai with
@@ -422,3 +502,5 @@ if __name__ == "__main__":
     # python main.py openai-embed --video_path ../data/V1_end.mp4 --descriptions "Pouring water into red cabbage filled beaker" --descriptions "Turning on heat plate" --descriptions "Putting red cabbage solution into test tube (first time)" --descriptions "Putting red cabbage solution into test tube (second time)"
     # run clip with
     # python main.py clip-embed --video_path https://myimagebucketlabar.s3.us-east-2.amazonaws.com/V1_end.mp4 --descriptions "Pouring water into red cabbage filled beaker" --descriptions "Turning on heat plate" --descriptions "Putting red cabbage solution into test tube (first time)" --descriptions "Putting red cabbage solution into test tube (second time)" --generate-report
+    # summarie
+    # python main.py summarize --video_path https://myimagebucketlabar.s3.us-east-2.amazonaws.com/V1_end.mp4

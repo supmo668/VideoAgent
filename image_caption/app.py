@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from typing import List, Optional
+import asyncio
 
 from bentoml import service
 import bentoml
@@ -9,6 +10,7 @@ from pydantic import Field
 from main import (
     process_video_clip_core,
     process_video_openai_core,
+    process_and_summarize_video,
     load_config
 )
 from models import VideoAnalysisRequest, VideoAnalysisResponse
@@ -102,6 +104,44 @@ class VideoAnalyzerService:
         else:
             # Return HTML content
             return str(report_path.read_text())
+
+    @bentoml.task
+    async def summarize_video(
+        self,
+        video_path: str = Field(...),
+        fps: float = Field(default=30),
+        keep_temp_dir: bool = Field(default=False),
+        config_path: str = Field(default="config.yaml"),
+        cache_db_path: str = Field(default="embeddings_cache.db")
+    ) -> dict:
+        """
+        Summarize a video by extracting frames and generating a summary and title.
+        
+        Args:
+            video_path: Path to the input video file.
+            fps: Frames per second to extract from the video.
+            keep_temp_dir: Whether to keep the temporary directory after processing.
+            config_path: Path to the configuration file.
+            cache_db_path: Path to the embeddings cache database.
+        
+        Returns:
+            dict: A dictionary containing the summary and title.
+        """
+        try:
+            result = await process_and_summarize_video(
+                video_path=video_path,
+                fps=fps,
+                keep_temp_dir=keep_temp_dir,
+                config_path=config_path,
+                cache_db_path=cache_db_path
+            )
+            if not result:
+                raise bentoml.exceptions.BentoMLException("Video summarization failed")
+
+            return result
+
+        except Exception as e:
+            raise bentoml.exceptions.BentoMLException(str(e))
 
 # To start
 # bentoml serve app:VideoAnalyzerService --reload --port 8000
