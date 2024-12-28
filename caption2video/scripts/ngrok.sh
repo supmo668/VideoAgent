@@ -1,0 +1,1 @@
+ngrok tunnel --label edge=edghts_2qUawaCCv6ozlJvAulecPNhQfYU http://localhost:8000
