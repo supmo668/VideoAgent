@@ -1,7 +1,11 @@
 from typing import List, Dict, Any, Optional, Tuple
+import os
+import json
+from datetime import datetime
+
 import reflex as rx
-from enum import Enum
 from dotenv import load_dotenv
+
 # Load environment variables
 load_dotenv()
 
@@ -10,22 +14,12 @@ import pandas as pd
 from huggingface_hub import HfApi, CommitOperationAdd
 from huggingface_hub.utils import RepositoryNotFoundError
 import tempfile
-import os
-import json
-from datetime import datetime
 
-class BioAllowableActionTypes(str, Enum):
-    LIQUID_HANDLING = "LIQUID_HANDLING"
-    INCUBATION = "INCUBATION"
-    MIXING = "MIXING"
-    SEPARATION = "SEPARATION"
-    OBSERVATION = "OBSERVATION"
-    PLATE_HANDLING = "PLATE_HANDLING"
-    STORAGE = "STORAGE"
-    LABELLING = "LABELLING"
-    INSTRUMENTATION = "INSTRUMENTATION"
-    EXTRACTION = "EXTRACTION"
-    PIPETTING = "PIPETTING"
+# Import from app/models
+import sys
+from _PATH import EXTRA_PATHS
+sys.path.extend(EXTRA_PATHS)
+from models.llm.action_steps import ActionProtocol, BioAllowableActionTypes
 
 class State(rx.State):
     """The app state."""
@@ -132,32 +126,77 @@ class State(rx.State):
             
         return True
     
-    def push_to_huggingface(self) -> None:
-        """Push annotations to Hugging Face dataset with enhanced error handling."""
-        self.hf_error = ""
-        self.hf_success = ""
-        self.hf_progress = ""
+    def _process_string_list(self, value: str | list, field_name: str) -> list:
+        """Process a value that should be a list of strings.
         
+        Args:
+            value: String with comma-separated values or list
+            field_name: Name of the field for error messages
+            
+        Returns:
+            List of strings
+        """
         try:
-            # Validate repository name
-            if not self.validate_hf_repo():
-                return
+            if isinstance(value, list):
+                return [str(x).strip() for x in value if str(x).strip()]
+            if not value:  # Handle empty string
+                return []
+            return [str(x.strip()) for x in value.split(",") if x.strip()]
+        except Exception as e:
+            print(f"Error processing {field_name}: {value} of type {type(value)}")
+            print(f"Error details: {str(e)}")
+            return []
+
+    def _process_annotation(self, ann: dict) -> dict:
+        """Process a single annotation into the correct format.
+        
+        Args:
+            ann: Raw annotation dictionary
             
-            # Validate token
-            token = os.getenv("HUGGINGFACE_TOKEN")
-            if not token:
-                self.hf_error = "HUGGINGFACE_TOKEN not found in environment variables"
-                return
+        Returns:
+            Processed annotation dictionary
+        """
+        try:
+            # Process lists
+            apparatus = self._process_string_list(ann["detected_apparatus"], "detected_apparatus")
+            instruments = self._process_string_list(ann["detected_instruments"], "detected_instruments")
+            materials = self._process_string_list(ann["detected_materials"], "detected_materials")
             
-            # Validate annotations
-            if not self.annotations:
-                self.hf_error = "No annotations to push"
-                return
+            # Process spatial information
+            spatial_info = ann["spatial_information"]
+            if isinstance(spatial_info, str):
+                try:
+                    spatial_info = json.loads(spatial_info)
+                except json.JSONDecodeError:
+                    spatial_info = {}
             
-            # Initialize HF API
-            api = HfApi(token=token)
+            return {
+                "frame": int(ann["frame"]),
+                "timestamp": float(ann["time"]),
+                "action_type": str(ann["action_type"]),
+                "action_description": str(ann["action_description"]),
+                "detected_apparatus": apparatus,
+                "detected_instruments": instruments,
+                "detected_materials": materials,
+                "spatial_information": str(spatial_info),
+                "video_url": str(self.video_url),
+                "upload_timestamp": datetime.now().isoformat()
+            }
+        except Exception as e:
+            print(f"Error processing annotation: {ann}")
+            print(f"Error details: {str(e)}")
+            raise
+
+    def _create_or_get_dataset(self, api: HfApi) -> bool:
+        """Create dataset if it doesn't exist.
+        
+        Args:
+            api: Hugging Face API instance
             
-            # Check if dataset exists
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
             self.set_hf_progress("Checking dataset existence...")
             try:
                 api.dataset_info(self.hf_dataset_repo)
@@ -169,45 +208,74 @@ class State(rx.State):
                     repo_type="dataset",
                     private=self.is_private_dataset
                 )
+            return True
+        except Exception as e:
+            self.hf_error = f"Error creating/accessing dataset: {str(e)}"
+            return False
+
+    def _create_data_file(self, processed_annotations: list) -> tuple[str, bool]:
+        """Create temporary JSON file with annotations.
+        
+        Args:
+            processed_annotations: List of processed annotations
             
-            # Convert annotations to a format suitable for HF dataset
-            self.set_hf_progress("Processing annotations...")
-            data = []
-            for ann in self.annotations:
-                # Convert comma-separated strings to lists and ensure they're regular Python strings
-                apparatus = [str(x.strip()) for x in ann["detected_apparatus"].split(",") if x.strip()] if ann["detected_apparatus"] else []
-                instruments = [str(x.strip()) for x in ann["detected_instruments"].split(",") if x.strip()] if ann["detected_instruments"] else []
-                materials = [str(x.strip()) for x in ann["detected_materials"].split(",") if x.strip()] if ann["detected_materials"] else []
-                
-                # Convert spatial information from string to dict if it's a string
-                spatial_info = ann["spatial_information"]
-                if isinstance(spatial_info, str):
-                    try:
-                        spatial_info = json.loads(spatial_info)
-                    except json.JSONDecodeError:
-                        spatial_info = {}
-                
-                data.append({
-                    "frame": int(ann["frame"]),
-                    "timestamp": float(ann["time"]),
-                    "action_type": str(ann["action_type"]),
-                    "action_description": str(ann["action_description"]),
-                    "detected_apparatus": apparatus,
-                    "detected_instruments": instruments,
-                    "detected_materials": materials,
-                    "spatial_information": str(spatial_info),
-                    "video_url": str(self.video_url),
-                    "upload_timestamp": datetime.now().isoformat()
-                })
-            
-            # Create a temporary file to store the new data
+        Returns:
+            tuple: (temp_file_path, success)
+        """
+        try:
             self.set_hf_progress("Preparing data for upload...")
             with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as f:
-                json.dump({"annotations": data}, f, indent=2)
-                temp_file = f.name
+                json.dump({"annotations": processed_annotations}, f, indent=2)
+                return f.name, True
+        except Exception as e:
+            self.hf_error = f"Error creating data file: {str(e)}"
+            return "", False
+
+    def push_to_huggingface(self) -> None:
+        """Push annotations to Hugging Face dataset with enhanced error handling."""
+        self.hf_error = ""
+        self.hf_success = ""
+        self.hf_progress = ""
+        temp_file = None
+        
+        try:
+            # Validate inputs
+            if not self.validate_hf_repo():
+                return
             
+            token = os.getenv("HUGGINGFACE_TOKEN")
+            if not token:
+                self.hf_error = "HUGGINGFACE_TOKEN not found in environment variables"
+                return
+            
+            if not self.annotations:
+                self.hf_error = "No annotations to push"
+                return
+            
+            # Initialize HF API
+            api = HfApi(token=token)
+            
+            # Create or get dataset
+            if not self._create_or_get_dataset(api):
+                return
+            
+            # Process annotations
+            self.set_hf_progress("Processing annotations...")
             try:
-                # Create the commit operation for the new data
+                processed_annotations = [
+                    self._process_annotation(ann) for ann in self.annotations
+                ]
+            except Exception as e:
+                self.hf_error = f"Error processing annotations: {str(e)}"
+                return
+            
+            # Create temporary file
+            temp_file, success = self._create_data_file(processed_annotations)
+            if not success:
+                return
+            
+            # Create and execute commit
+            try:
                 self.set_hf_progress("Creating commit operation...")
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 filename = f"annotations_{timestamp}.json"
@@ -219,27 +287,26 @@ class State(rx.State):
                     )
                 ]
                 
-                # Create a commit with the new data
                 self.set_hf_progress("Uploading new annotations...")
                 api.create_commit(
                     repo_id=self.hf_dataset_repo,
                     repo_type="dataset",
                     operations=operations,
-                    commit_message=f"Add new annotations batch - {len(data)} items"
+                    commit_message=f"Add new annotations batch - {len(processed_annotations)} items"
                 )
                 
-                self.hf_success = f"Successfully pushed {len(data)} annotations to {self.hf_dataset_repo}"
+                self.hf_success = f"Successfully pushed {len(processed_annotations)} annotations to {self.hf_dataset_repo}"
                 self.set_hf_progress("Upload complete!")
-            finally:
-                # Clean up temporary file
-                if os.path.exists(temp_file):
-                    os.unlink(temp_file)
-            
-        except ImportError as e:
-            self.hf_error = f"Required package not found: {str(e)}"
+                
+            except Exception as e:
+                self.hf_error = f"Error creating commit: {str(e)}"
+                
         except Exception as e:
             self.hf_error = f"Error pushing to Hugging Face: {str(e)}"
         finally:
+            # Clean up temporary file
+            if temp_file and os.path.exists(temp_file):
+                os.unlink(temp_file)
             if self.hf_error:
                 self.set_hf_progress("Upload failed!")
     
