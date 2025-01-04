@@ -1,3 +1,3 @@
-[submodule "Annotations/testsetParser"]
-	path = Annotations/testsetParser
+[submodule "Annotations/video_annotation_hf"]
+	path = Annotations/video_annotation_hf
 	url = git@github.com:supmo668/video_annotation_hf.git
