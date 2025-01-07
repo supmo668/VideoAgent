@@ -323,49 +323,6 @@ def generate_pdf_report(output_path: str, report_data: List[Dict[str, str]]) -> 
             elements.append(Image(item['image_path'], width=400, height=300))
     doc.build(elements)
 
-def process_video_clip_core(
-    video_path: str,
-    user_descs: List[str],
-    fps: float = 2.0,
-    config_path: str = "config.yaml",
-    cache_db_path: str = "embeddings_cache.db",
-    keep_temp_dir: bool = True,
-    record_top_k_frames: int = 20,
-    generate_report: bool = True
-) -> Optional[Dict[str, str]]:
-    """Core function to process video using CLIP embedding model."""
-    cfg = load_config(config_path)
-    try:
-        request = VideoAnalysisRequest(
-            video_path=video_path,
-            user_descs=user_descs,
-            model_type="clip",
-            fps=fps,
-            record_top_k_frames=record_top_k_frames,
-            generate_report=generate_report
-        )
-        
-        temp_dir, result_dir = setup_processing_environment(
-            request.video_path, cache_db_path, keep_temp_dir, suffix="_clip")
-        frames: List[Tuple[int, str]] = extract_frames(request.video_path, temp_dir, request.fps)
-        processor = ClipEmbeddingProcessor(cache_db_path)
-
-        results: Optional[Dict[str, str]] = process_video_with_processor(
-            processor=processor,
-            frames=frames,
-            user_descs=request.user_descs,
-            cfg=cfg,
-            result_dir=result_dir,
-            record_top_k_frames=request.record_top_k_frames,
-            model_type=request.model_type,
-            generate_report=request.generate_report
-        )
-        if results:
-            print(f"Reports saved to {results['local_html']} and {results['local_pdf']}.")
-        return results
-    finally:
-        cleanup_environment(temp_dir, keep_temp_dir)
-
 def process_video_openai_core(
     video_path: str,
     user_descs: List[str],
@@ -413,32 +370,6 @@ def process_video_openai_core(
 @click.group()
 def cli():
     pass
-
-@cli.command(name="clip-embed")
-@click.option("--video_path", required=True, help="Path to input video file")
-@click.option("--descriptions", required=True, multiple=True, help="List of descriptions to search for")
-@click.option("--fps", type=int, default=30, help="Target frames per second for extraction")
-@click.option("--config_path", default="config.yaml", help="Path to config file")
-@click.option("--cache_db_path", default="embeddings_cache.db", help="Path to embeddings cache database")
-@click.option("--keep-temp-dir", is_flag=True, help="Keep temporary directory after processing")
-@click.option("--record-top-k-frames", default=20, help="Number of top frames to record")
-@click.option("--generate-report", is_flag=True, help="Generate report with results")
-def process_video_clip(
-    video_path, descriptions, fps, config_path,
-    cache_db_path, keep_temp_dir,
-    record_top_k_frames, generate_report
-):
-    """Process video using CLIP embedding model."""
-    process_video_clip_core(
-        video_path=video_path,
-        user_descs=descriptions,
-        fps=fps,
-        config_path=config_path,
-        cache_db_path=cache_db_path,
-        keep_temp_dir=keep_temp_dir,
-        record_top_k_frames=record_top_k_frames,
-        generate_report=generate_report
-    )
 
 @cli.command(name="openai-embed")
 @click.option("--video_path", required=True, help="Path to input video file")
@@ -494,13 +425,86 @@ def summarize_video(
         else:
             click.echo("Video processing failed.")
     asyncio.run(run())
+
+@cli.command(name="image-embed")
+@click.option("--video_path", required=True, help="Path to input video file")
+@click.option("--descriptions", required=True, multiple=True, help="List of descriptions to search for")
+@click.option("--model", type=click.Choice(['clip', 'blip', 'combined']), default='blip', help="Embedding model to use")
+@click.option("--fps", type=int, default=30, help="Target frames per second for extraction")
+@click.option("--config_path", default="config.yaml", help="Path to config file")
+@click.option("--cache_db_path", default="embeddings_cache.db", help="Path to embeddings cache database")
+@click.option("--keep-temp-dir", is_flag=True, help="Keep temporary directory after processing")
+@click.option("--record-top-k-frames", default=20, help="Number of top frames to record")
+@click.option("--generate-report", is_flag=True, help="Generate report with results")
+def process_video_with_model(
+    video_path, descriptions, model, fps, config_path,
+    cache_db_path, keep_temp_dir,
+    record_top_k_frames, generate_report
+):
+    """Process video using selected embedding model (CLIP, BLIP, or combined)."""
+    from clip_utils import (
+        get_frame_embedding_clip, get_text_embedding_clip,
+        get_frame_embedding_blip, get_text_embedding_blip,
+        get_frame_embedding_combined, get_text_embedding_combined
+    )
     
+    # Create a new processor class for the selected model
+    class SelectedModelProcessor:
+        def __init__(self, model_type):
+            self.model_type = model_type
+            
+        def get_frame_embedding(self, frame_path):
+            if self.model_type == 'clip':
+                return get_frame_embedding_clip(frame_path)
+            elif self.model_type == 'blip':
+                return get_frame_embedding_blip(frame_path)
+            else:  # combined
+                return get_frame_embedding_combined(frame_path)
+                
+        def get_text_embedding(self, text):
+            if self.model_type == 'clip':
+                return get_text_embedding_clip(text)
+            elif self.model_type == 'blip':
+                return get_text_embedding_blip(text)
+            else:  # combined
+                return get_text_embedding_combined(text)
+    
+    # Initialize the processor with selected model
+    processor = SelectedModelProcessor(model)
+    
+    temp_dir, result_dir = setup_processing_environment(
+        video_path, cache_db_path, keep_temp_dir)
+    try:
+        # Load configuration
+        cfg = load_config(config_path)
+        
+        # Extract frames
+        frames = extract_frames(video_path, temp_dir, fps)
+        
+        # Process frames
+        results = process_video_with_processor(
+            processor=processor,
+            frames=frames,
+            user_descs=descriptions,
+            cfg=cfg,
+            result_dir=result_dir,
+            record_top_k_frames=record_top_k_frames,
+            model_type=f"{model.upper()} Embedding",
+            generate_report=generate_report
+        )
+        
+        if results:
+            print(f"Reports saved to {results['local_html']} and {results['local_pdf']}.")
+        return results
+    finally:
+        cleanup_environment(temp_dir, keep_temp_dir)
+
 if __name__ == "__main__":
     cli()
     # run openai with
     # python main.py openai-embed --video_path https://myimagebucketlabar.s3.us-east-2.amazonaws.com/V1_end.mp4 --descriptions "Pouring water into red cabbage filled beaker" --descriptions "Turning on heat plate" --descriptions "Putting red cabbage solution into test tube (first time)" --descriptions "Putting red cabbage solution into test tube (second time)" --generate-report
     # python main.py openai-embed --video_path ../data/V1_end.mp4 --descriptions "Pouring water into red cabbage filled beaker" --descriptions "Turning on heat plate" --descriptions "Putting red cabbage solution into test tube (first time)" --descriptions "Putting red cabbage solution into test tube (second time)"
-    # run clip with
-    # python main.py clip-embed --video_path https://myimagebucketlabar.s3.us-east-2.amazonaws.com/V1_end.mp4 --descriptions "Pouring water into red cabbage filled beaker" --descriptions "Turning on heat plate" --descriptions "Putting red cabbage solution into test tube (first time)" --descriptions "Putting red cabbage solution into test tube (second time)" --generate-report
+    # run image-embed with
+    # python main.py image-embed --video_path https://myimagebucketlabar.s3.us-east-2.amazonaws.com/V1_end.mp4 --descriptions "Pouring water into red cabbage filled beaker" --descriptions "Turning on heat plate" --descriptions "Putting red cabbage solution into test tube (first time)" --descriptions "Putting red cabbage solution into test tube (second time)" --generate-report
     # summarize
     # python main.py summarize --video_path https://myimagebucketlabar.s3.us-east-2.amazonaws.com/V1_end.mp4

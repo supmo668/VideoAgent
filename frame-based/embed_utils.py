@@ -1,20 +1,20 @@
 # openai_utils.py
 import os
-
 import numpy as np
 from openai import OpenAI
-
-# Initialize OpenAI client once
-assert os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
 from langchain.output_parsers import PydanticOutputParser
 from models import ImageActionFrame, BioAllowableActionTypes
+
+def get_openai_client():
+    """Get OpenAI client instance, initializing it if necessary."""
+    assert os.getenv("OPENAI_API_KEY"), "OPENAI_API_KEY environment variable is required for OpenAI operations"
+    return OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def get_text_embedding_openai(text: str, model: str = "text-embedding-3-small") -> np.ndarray:
     """
     Generate text embedding using OpenAI embedding model.
     """
+    client = get_openai_client()
     text = text.replace("\n", " ")
     response = client.embeddings.create(input=[text], model=model)
     embedding = response.data[0].embedding
@@ -32,6 +32,7 @@ def get_frame_description(system_prompt: str, vision_prompt: str, frame_path: st
     Returns:
         str: Description of the image frame
     """
+    client = get_openai_client()
     try:
         import openai
         parser = PydanticOutputParser(pydantic_object=ImageActionFrame)
@@ -61,11 +62,10 @@ def get_frame_description(system_prompt: str, vision_prompt: str, frame_path: st
             ],
             max_tokens=300
         )
-        return response.choices[0].message.content.strip()
-        
+        return response.choices[0].message.content
     except Exception as e:
-        print(f"Error getting frame description: {str(e)}")
-        return f"Error processing frame: {str(e)}"
+        print(f"Error getting frame description: {e}")
+        return ""
 
 def encode_image(image_path: str) -> str:
     """
@@ -78,11 +78,9 @@ def encode_image(image_path: str) -> str:
         str: Base64 encoded image
     """
     import base64
-    
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode('utf-8')
 
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    norm_a = a / np.linalg.norm(a)
-    norm_b = b / np.linalg.norm(b)
-    return float(np.dot(norm_a, norm_b))
+    """Calculate cosine similarity between two vectors."""
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
