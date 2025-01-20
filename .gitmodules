@@ -1,3 +1,12 @@
 [submodule "Annotations/video_annotation_hf"]
 	path = Annotations/video_annotation_hf
 	url = git@github.com:supmo668/video_annotation_hf.git
+[submodule "candidate_framework/Ask-Anything"]
+	path = candidate_framework/Ask-Anything
+	url = git@github.com:OpenGVLab/Ask-Anything.git
+[submodule "candidate_framework/LLaVA-NeXT"]
+	path = candidate_framework/LLaVA-NeXT
+	url = git@github.com:LLaVA-VL/LLaVA-NeXT.git
+[submodule "candidate_framework/blip-image-captioning-api"]
+	path = candidate_framework/blip-image-captioning-api
+	url = git@github.com:askaresh/blip-image-captioning-api.git
