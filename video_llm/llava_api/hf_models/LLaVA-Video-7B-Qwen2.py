@@ -1,10 +1,11 @@
 # pip install git+https://github.com/LLaVA-VL/LLaVA-NeXT.git
 from llava_custom.builder import load_pretrained_model
-from llava.mm_utils import get_model_name_from_path, process_images, tokenizer_image_token
-from llava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN, IGNORE_INDEX
+from llava.mm_utils import tokenizer_image_token
+# from llava.mm_utils import get_model_name_from_path, process_images, 
+from llava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN
+# DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN, IGNORE_INDEX
 from llava.conversation import conv_templates, SeparatorStyle
 from PIL import Image
-import requests
 import copy
 import torch
 import sys
@@ -15,9 +16,16 @@ import click
 from transformers import BitsAndBytesConfig
 import torch.cuda
 import os
+from typing import List, Tuple, Optional, Any, Union
+
 warnings.filterwarnings("ignore")
 
-def load_video(video_path, max_frames_num,fps=1,force_sample=False):
+def load_video(
+    video_path: str, 
+    max_frames_num: int,
+    fps: int = 1,
+    force_sample: bool = False
+) -> Tuple[np.ndarray, List[float], float]:
     if max_frames_num == 0:
         return np.zeros((1, 336, 336, 3))
     vr = VideoReader(video_path, ctx=cpu(0))
@@ -39,7 +47,12 @@ def load_video(video_path, max_frames_num,fps=1,force_sample=False):
     spare_frames = vr.get_batch(frame_idx).asnumpy()
     return spare_frames,frame_time,video_time
 
-def process_frames_in_chunks(frames, image_processor, device, chunk_size=8):
+def process_frames_in_chunks(
+    frames: np.ndarray, 
+    image_processor: Any, 
+    device: str, 
+    chunk_size: int = 8
+) -> torch.Tensor:
     """Process video frames in chunks to save memory."""
     processed_chunks = []
     for i in range(0, len(frames), chunk_size):
@@ -61,7 +74,10 @@ def process_frames_in_chunks(frames, image_processor, device, chunk_size=8):
               help='Path to video file or video URL')
 @click.option('--prompt', default=None,
               help='Custom prompt for video analysis. If not provided, a default description prompt will be used.')
-def main(video_path, prompt):
+def main(
+    video_path: str, 
+    prompt: Optional[str]
+) -> Optional[str]:
     """Process video and generate AI description using LLaVA model."""
     try:
         torch.cuda.empty_cache()
@@ -99,7 +115,7 @@ def main(video_path, prompt):
         print(f"Final video tensor shape: {processed_video.shape}")
         
         image_sizes = [[video.shape[1], video.shape[2]] for _ in range(len(video))]
-        print(f"Image sizes: {image_sizes}")
+        print(f"Image size: {image_sizes[0]}. Num images: {len(image_sizes)}")
         
         torch.cuda.empty_cache()
         
@@ -111,7 +127,8 @@ def main(video_path, prompt):
         
         question = DEFAULT_IMAGE_TOKEN + f"\n{time_instruction}\n{prompt}"
         conv = copy.deepcopy(conv_templates[conv_template])
-        conv.append_message(conv.roles[0], question)
+        conv.append_message(
+            conv.roles[0], question)
         conv.append_message(conv.roles[1], None)
         prompt = conv.get_prompt()
         
@@ -147,4 +164,6 @@ def main(video_path, prompt):
         sys.exit(1)
 
 if __name__ == "__main__":
-    main()
+    response = main()
+    with open("response.txt", "w") as f:
+        f.write(response)

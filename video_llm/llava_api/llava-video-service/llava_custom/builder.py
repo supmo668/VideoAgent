@@ -24,7 +24,10 @@ from llava.constants import DEFAULT_IMAGE_PATCH_TOKEN, DEFAULT_IM_START_TOKEN, D
 from llava.utils import rank0_print
 
 
-def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, load_4bit=False, device_map="auto", torch_dtype="float16",attn_implementation="flash_attention_2", customized_config=None, overwrite_config=None, **kwargs):
+def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, load_4bit=False, device_map="auto", torch_dtype="float16",attn_implementation="flex_attention", customized_config=None, overwrite_config=None, **kwargs):
+    """
+    Specified `attn_implementation="flash_attention"` is not supported. The only possible arguments are `attn_implementation="eager"` (manual attention implementation), `"attn_implementation=flash_attention_2"` (implementation using flash attention 2), `"attn_implementation=sdpa"` (implementation using torch.nn.functional.scaled_dot_product_attention), `"attn_implementation=flex_attention"` (implementation using torch's flex_attention).
+    """
     # Only set device_map if not using quantization
     if not (load_8bit or load_4bit):
         kwargs["device_map"] = device_map

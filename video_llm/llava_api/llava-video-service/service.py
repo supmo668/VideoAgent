@@ -11,8 +11,8 @@ import uuid
 import warnings
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
-from unittest.mock import Mock
+from typing import Any, Dict, List, Optional, Union, Tuple
+import yaml
 
 # Third-party imports
 import aiohttp
@@ -22,18 +22,34 @@ import torch
 from pydantic import BaseModel, Field, validator
 from dotenv import load_dotenv
 load_dotenv()
-import cv2
-from transformers import TextStreamer
+from PIL import Image
+from transformers import TextStreamer, StoppingCriteria, AutoConfig
+from decord import VideoReader, cpu
 
 # Local imports
 from llava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
 from llava.conversation import conv_templates, SeparatorStyle
-from llava.model.builder import load_pretrained_model
-from llava.utils import disable_torch_init
-from llava.mm_utils import process_images, tokenizer_image_token, get_model_name_from_path, KeywordsStoppingCriteria
+from llava.mm_utils import tokenizer_image_token, get_model_name_from_path, KeywordsStoppingCriteria
 from prompt_library import PromptLibrary
 from tracing import TracingConfig
 from langsmith import traceable
+from logging_config import get_logger, log_function_call, sanitize_log_data
+
+# Initialize logger
+logger = get_logger()
+
+# Load configuration
+def load_config():
+    config_path = Path(__file__).parent / "config.yaml"
+    with open(config_path, "r") as f:
+        return yaml.safe_load(f)
+
+CONFIG = load_config()
+DEFAULTS = CONFIG["defaults"]
+MODEL_CONFIG = CONFIG["model"]
+SERVICE_CONFIG = CONFIG["service"]
+VIDEO_CONFIG = CONFIG["video"]
+ENV_CONFIG = CONFIG["environment"]
 
 # Initialize tracing
 tracing_config = TracingConfig()
@@ -42,18 +58,18 @@ tracing_config.enable_tracing()
 # Model request/response classes
 class ImageMetadata(BaseModel):
     image_url: Optional[str] = Field(None, description="URL of the image to analyze")
-    prompt: str = Field("Describe this image", description="Prompt for image analysis")
-    temperature: float = Field(0.2, description="Temperature for generation")
-    max_new_tokens: int = Field(512, description="Maximum number of new tokens to generate")
-    context_len: int = Field(2048, description="Context length for generation")
+    prompt: str = Field(DEFAULTS["image"]["prompt"], description="Prompt for image analysis")
+    temperature: float = Field(DEFAULTS["image"]["temperature"], description="Temperature for generation")
+    max_new_tokens: int = Field(DEFAULTS["image"]["max_new_tokens"], description="Maximum number of new tokens to generate")
+    context_len: int = Field(DEFAULTS["image"]["context_len"], description="Context length for generation")
 
 class VideoMetadata(BaseModel):
     video_url: Optional[str] = Field(None, description="URL of the video to analyze")
-    prompt: str = Field("Describe this video", description="Prompt for video analysis")
-    temperature: float = Field(0.2, description="Temperature for generation")
-    max_new_tokens: int = Field(512, description="Maximum number of new tokens to generate")
-    context_len: int = Field(2048, description="Context length for generation")
-    fps: int = Field(1, description="Frames per second to extract")
+    prompt: str = Field(DEFAULTS["video"]["prompt"], description="Prompt for video analysis")
+    temperature: float = Field(DEFAULTS["video"]["temperature"], description="Temperature for generation")
+    max_new_tokens: int = Field(DEFAULTS["video"]["max_new_tokens"], description="Maximum number of new tokens to generate")
+    context_len: int = Field(DEFAULTS["video"]["context_len"], description="Context length for generation")
+    fps: int = Field(DEFAULTS["video"]["fps"], description="Frames per second to extract")
 
 class ImageResponse(BaseModel):
     response: Optional[str] = Field(None, description="Generated response")
@@ -95,40 +111,57 @@ class TwelveLabsResponse(BaseModel):
 
 # LLaVA Service
 @bentoml.service(
-    resources={"gpu": 1},
-    traffic={"timeout": 300}
+    resources=SERVICE_CONFIG["resources"],
+    traffic=SERVICE_CONFIG["traffic"]
 )
 class LLaVAVideoService:
+    _model_lock = asyncio.Lock()
+    _model_instance = None  # Class-level attribute to store the model
     def __init__(self) -> None:
-        disable_torch_init()
-        self.pretrained = "lmms-lab/LLaVA-Video-7B-Qwen2"
-        self.model_name = "llava_qwen"
-        self.device = "cuda"
+        logger.info("Initializing LLaVAVideoService")
+        self.pretrained = MODEL_CONFIG["pretrained"]
+        self.model_name = MODEL_CONFIG["model_name"]
+        self.device = MODEL_CONFIG["device"]
 
         torch.cuda.empty_cache()
-        os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
-
-        self.tokenizer, self.model, self.image_processor, self.context_len = self._load_model()
+        os.environ['PYTORCH_CUDA_ALLOC_CONF'] = ENV_CONFIG["cuda_alloc_conf"]
         
+        logger.debug(f"Loading model with config: {sanitize_log_data(MODEL_CONFIG)}")
+        
+        if LLaVAVideoService._model_instance is None:
+            self.tokenizer, self.model, self.image_processor, self.context_len = self._load_model()
+            LLaVAVideoService._model_instance = (self.tokenizer, self.model, self.image_processor, self.context_len)
+        else:
+            self.tokenizer, self.model, self.image_processor, self.context_len = LLaVAVideoService._model_instance
+
         if hasattr(self.model, 'get_vision_tower'):
             vision_tower = self.model.get_vision_tower()
             if hasattr(vision_tower, 'vision_tower'):
                 vision_tower.vision_tower = vision_tower.vision_tower.to(dtype=torch.float16)
-        
-        self.model.eval()
 
+        self.model.eval()
+        logger.info("LLaVAVideoService initialization completed")
+
+    @log_function_call(skip_args=True)  # Skip args due to large model objects
     def _load_model(self):
-        from llava_custom.builder import load_pretrained_model
+        from llava_custom.builder import load_pretrained_model        
+        # # Custom configuration to handle meta parameters
+        # config = AutoConfig.from_pretrained(self.pretrained)
+        # config.use_cache = True
+        # config.torch_dtype = torch.float16
+        
         tokenizer, model, image_processor, context_len = load_pretrained_model(
             self.pretrained, 
             None, 
             self.model_name,
-            torch_dtype=torch.float16,
-            device_map="auto",
-            load_4bit=True
+            torch_dtype=getattr(torch, MODEL_CONFIG["torch_dtype"]),
+            device_map=MODEL_CONFIG["device_map"],
+            load_4bit=MODEL_CONFIG["load_4bit"],
         )
+        model.eval()
         return tokenizer, model, image_processor, context_len
 
+    @log_function_call()
     @contextmanager
     def _temp_file_context(self, content: bytes, suffix: str = "") -> str:
         temp_dir = Path(tempfile.mkdtemp(prefix=f"llava_{uuid.uuid4()}_"))
@@ -144,8 +177,9 @@ class LLaVAVideoService:
                 if temp_dir.exists():
                     temp_dir.rmdir()
             except Exception as e:
-                print(f"Warning: Failed to cleanup temporary file {temp_path}: {str(e)}")
+                logger.warning(f"Failed to cleanup temporary file {temp_path}: {str(e)}")
 
+    @log_function_call()
     async def _download_file(self, url: str) -> bytes:
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
@@ -153,117 +187,204 @@ class LLaVAVideoService:
                     raise Exception(f"Failed to download file: {response.status}")
                 return await response.read()
 
-    async def _process_video(self, video_path: str, fps: int = 2) -> List[str]:
+    @log_function_call()
+    async def _process_video(self, video_path: str | Path, fps: int = DEFAULTS["video"]["fps"]) -> Tuple[np.ndarray, List[float], float]:
+        """Process video using decord.
+        
+        Args:
+            video_path: Path to the video file
+            fps: Frames per second to extract
+            
+        Returns:
+            Tuple containing:
+            - Numpy array of video frames
+            - List of frame times
+            - Total video duration
+        """
         try:
-
-            cap = cv2.VideoCapture(video_path)
-            if not cap.isOpened():
-                raise Exception("Failed to open video file")
-
-            frames = []
-            frame_count = 0
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            frame_interval = int(cap.get(cv2.CAP_PROP_FPS) / fps)
-
-            while frame_count < total_frames:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_count)
-                ret, frame = cap.read()
-                if not ret:
+            max_frames_num = VIDEO_CONFIG["max_frames"]  # Same as template
+            vr = VideoReader(str(video_path), ctx=cpu(0))
+            total_frames_num = len(vr)
+            
+            # Calculate frame indices and times
+            frame_idx = []
+            frame_time = []
+            for i in range(0, total_frames_num, int(vr.get_avg_fps() / fps)):
+                frame_idx.append(i)
+                frame_time.append(i / vr.get_avg_fps())
+                if len(frame_idx) == max_frames_num:
                     break
-                
-                # Convert frame to bytes
-                _, buffer = cv2.imencode('.jpg', frame)
-                frames.append(buffer.tobytes())
-                frame_count += frame_interval
-
-            cap.release()
-            return frames
+            
+            video_time = total_frames_num / vr.get_avg_fps()
+            
+            # Get frames using decord
+            frames = vr.get_batch(frame_idx).asnumpy()
+            return frames, frame_time, video_time
+            
         except Exception as e:
             raise Exception(f"Error processing video: {str(e)}")
+            
+    @log_function_call()
+    async def _process_image(self, image_path: Union[str, bytes], is_bytes: bool = False) -> Tuple[np.ndarray, List[float], float]:
+        """Process an image from either a file path or bytes content.
+        
+        Args:
+            image_path: Either a file path (str) or image content (bytes)
+            is_bytes: Whether the input is bytes content
+            
+        Returns:
+            Tuple containing:
+            - Numpy array of single image frame
+            - Empty list of frame times
+            - Zero video time (single frame)
+        """
+        try:
+            if is_bytes:
+                with self._temp_file_context(image_path, ".jpg") as temp_image:
+                    image = np.array(Image.open(temp_image))
+            else:
+                image = np.array(Image.open(image_path))
+            return np.expand_dims(image, 0), [], 0
+        except Exception as e:
+            raise Exception(f"Error processing image: {str(e)}")
 
-    def _generate_response(self, prompt: str, image_paths: List[str], metadata: Union[ImageMetadata, VideoMetadata]) -> str:
-        conv = conv_templates["llava_v1"].copy()
-        roles = conv.roles
+    @log_function_call()
+    def process_frames_in_chunks(self, frames: np.ndarray, chunk_size: int = 4) -> torch.Tensor:
+        """Process frames in chunks to manage memory."""
+        processed_chunks = []
+        for i in range(0, len(frames), chunk_size):
+            chunk = frames[i:i + chunk_size]
+            chunk_tensor = self.image_processor.preprocess([Image.fromarray(frame) for frame in chunk], return_tensors="pt")["pixel_values"]
+            chunk_tensor = chunk_tensor.to(device=torch.device(self.device), dtype=torch.float16)
+            processed_chunks.append(chunk_tensor)
+            torch.cuda.empty_cache()
+        logger.info(f"Processed frames: to {len(processed_chunks)} chunks")
+        return torch.cat(processed_chunks, dim=0)
 
-        image_tensors = []
-        for image_path in image_paths:
-            image = Image.open(image_path)
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-            image_tensor = process_images([image], self.image_processor)
-            image_tensors.append(image_tensor)
+    @log_function_call(skip_args=True)  # Skip args due to potentially large frame data
+    async def _generate_response(
+        self, 
+        prompt: str, 
+        frames: np.ndarray, 
+        metadata: Union[ImageMetadata, VideoMetadata],
+        frame_time: List[float] = None,
+        video_time: float = None
+    ) -> str:
+        """Generate response using the model.
+        
+        Args:
+            prompt: The prompt text
+            frames: Numpy array of frames (single frame for image, multiple for video)
+            metadata: Metadata containing parameters
+            frame_time: List of timestamps for each frame
+            video_time: Total duration of the video
+            
+        Returns:
+            Generated response text
+        """
+        logger.info("Generating response...")
+        processed_frames = self.process_frames_in_chunks(frames)
+        conv = copy.deepcopy(conv_templates["qwen_1_5"])
 
-        if len(image_tensors) == 0:
-            raise ValueError("No valid images found")
-
-        image_tensor = torch.cat(image_tensors, dim=0)
-        conv.append_message(roles[0], prompt)
-        conv.append_message(roles[1], None)
+        # Add time instructions for video
+        if len(frames) > 1:  # It's a video
+            logger.info(f"Processing video with {len(frames)} frames")
+            time_instruction = f"The video lasts for {video_time:.2f} seconds, and {len(frames)} frames are uniformly sampled from it. These frames are located at {frame_time}."
+            question = DEFAULT_IMAGE_TOKEN + f"\n{time_instruction}\n{prompt}"
+        else:
+            question = DEFAULT_IMAGE_TOKEN + f"Answer the following based on the image:\n{prompt}"
+        
+        conv.append_message(conv.roles[0], question)
+        conv.append_message(conv.roles[1], None)
         prompt = conv.get_prompt()
 
-        input_ids = tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors='pt').unsqueeze(0).cuda()
-        stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
-        keywords = [stop_str]
-        stopping_criteria = KeywordsStoppingCriteria(keywords, self.tokenizer, input_ids)
+        # Tokenize input
+        input_ids = tokenizer_image_token(
+            prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors='pt').unsqueeze(0)
+        input_ids = input_ids.to(device=torch.device(self.device))
+
+        # Create attention mask
+        attention_mask = torch.ones_like(input_ids)
+        attention_mask = attention_mask.to(device=torch.device(self.device))
 
         with torch.inference_mode():
+            logger.info("Model inference...")
             output_ids = self.model.generate(
                 input_ids,
-                images=image_tensor.half().cuda(),
-                do_sample=True if metadata.temperature > 0 else False,
+                images=[processed_frames],  # Wrap in list as per template
+                attention_mask=attention_mask,
+                modalities=["video"] if len(frames) > 1 else ["image"],
+                do_sample=True,  # Match template settings
                 temperature=metadata.temperature,
-                max_new_tokens=metadata.max_new_tokens,
-                stopping_criteria=[stopping_criteria])
+                max_new_tokens=metadata.max_new_tokens
+            )
 
         outputs = self.tokenizer.decode(output_ids[0, input_ids.shape[1]:]).strip()
         conv.messages[-1][-1] = outputs
 
+        torch.cuda.empty_cache()
         return outputs
 
     @bentoml.api
-    async def analyze_video(self, metadata: VideoMetadata) -> VideoResponse:
-        try:
-            if metadata.video_url:
-                video_content; bytes = await self._download_file(metadata.video_url)
-                with self._temp_file_context(video_content, ".mp4") as temp_video:
-                    return analyze_video_file(metadata, temp_video)
-        except Exception as e:
-            return VideoResponse(
-                status="failed",
-                error=str(e),
-            )
-    
-    @bentoml.api
+    @log_function_call()
     async def analyze_video_file(self, metadata: VideoMetadata, video: Path) -> VideoResponse:
         try:
-            frames = await self._process_video(str(video), metadata.fps)
-            with self._temp_file_context(frames[0], ".jpg") as temp_frame:
-                    response = self._generate_response
-                    (metadata.prompt, [temp_frame], metadata)
-                return VideoResponse(response=response)
+            frames, frame_time, video_time = await self._process_video(str(video), metadata.fps)
+            metadata.context_len = video_time  # Update context_len with actual video time
+            response = await self._generate_response(
+                metadata.prompt, frames, metadata, frame_time=frame_time, video_time=video_time)
+            return VideoResponse(response=response)
         except Exception as e:
             return VideoResponse(
-                    status="failed",
-                    error=str(e),
-                )
+                status="error",
+                error=str(e),
+            )
 
     @bentoml.api
-    async def analyze_image(self, metadata: ImageMetadata) -> ImageResponse:
-        """Analyze a single image."""
+    @log_function_call()
+    async def analyze_image_file(self, metadata: ImageMetadata, image: Path) -> ImageResponse:
+        """Analyze a single image from a file."""
+        try:
+            is_bytes = isinstance(image, bytes)
+            frames, frame_time, video_time = await self._process_image(image if is_bytes else str(image), is_bytes)
+            response = await self._generate_response(metadata.prompt, frames, metadata)
+            return ImageResponse(response=response)
+        except Exception as e:
+            return ImageResponse(
+                status="error",
+                error=str(e),
+            )
+
+    @bentoml.api
+    @log_function_call()
+    async def analyze_image(self, metadata: ImageMetadata, image: Path = None) -> ImageResponse:
+        """Analyze a single image from URL."""
         try:
             if metadata.image_url:
                 image_content = await self._download_file(metadata.image_url)
                 with self._temp_file_context(image_content, ".jpg") as temp_image:
-                    response = self._generate_response(
-                        metadata.prompt, [temp_image], metadata)
+                    return await self.analyze_image_file(metadata, temp_image)
             else:
-                response = self._generate_response(
-                    metadata.prompt, [str(image)], metadata)
-
-            return ImageResponse(response=response)
+                raise ValueError("image_url is required for analyze_image")
         except Exception as e:
             return ImageResponse(
-                status="failed",
+                status="error",
+                error=str(e),
+            )
+
+    @bentoml.api
+    @log_function_call()
+    async def analyze_video(self, metadata: VideoMetadata, video: Path = None) -> VideoResponse:
+        try:
+            if metadata.video_url:
+                video_content = await self._download_file(metadata.video_url)
+                with self._temp_file_context(video_content, ".mp4") as temp_video:
+                    return await self.analyze_video_file(metadata, temp_video)
+            else:
+                raise ValueError("video_url is required for analyze_video")
+        except Exception as e:
+            return VideoResponse(
+                status="error",
                 error=str(e),
             )
 
@@ -275,12 +396,16 @@ class LLaVAVideoService:
 )
 class TwelveLabsAPIService:
     def __init__(self) -> None:
-        self.BASE_URL = "https://api.twelvelabs.io/v1.3"
+        logger.info("Initializing TwelveLabsAPIService")
+        self.BASE_URL = DEFAULTS["twelvelabs"]["base_url"]
         self.API_KEY = os.getenv("TWELVE_LABS_API_KEY")
         if not self.API_KEY:
+            logger.error("TWELVE_LABS_API_KEY environment variable is not set")
             raise ValueError("TWELVE_LABS_API_KEY environment variable is not set")
         self.prompt_library = PromptLibrary()
+        logger.info("TwelveLabsAPIService initialization completed")
 
+    @log_function_call()
     @traceable(run_type="chain")
     async def _video_qa_request(
         self, 
@@ -294,7 +419,7 @@ class TwelveLabsAPIService:
                     prompt = await self.prompt_library.get_prompt(request.prompt_name)
                     request.prompt = prompt
                 else:
-                    print("Warning: Prompt library not available, using default prompt")
+                    logger.warning("Prompt library not available, using default prompt")
 
             # Upload video first
             upload_response: TwelveLabsResponse = await self.upload_video(request)
@@ -340,6 +465,8 @@ class TwelveLabsAPIService:
                 error=str(e)
             )
 
+    @bentoml.api
+    @log_function_call()
     async def upload_video(self, request: TwelveLabsRequest) -> TwelveLabsResponse:
         """Upload a video to TwelveLabs using video URL."""
         try:
@@ -370,12 +497,12 @@ class TwelveLabsAPIService:
                         system_metadata = video.get("system_metadata", {})
                         video_title = system_metadata.get("video_title", system_metadata.get("filename"))
                         if Path(request.video_url).name == video_title:
-                            print(f"Video '{video_title}' already exists in index with ID: {video['_id']}")
+                            logger.info(f"Video '{video_title}' already exists in index with ID: {video['_id']}")
                             return TwelveLabsResponse(
                                 task_id=None,
                                 video_id=video["_id"]
                             )
-            print(f"Proceeding to upload.")
+            logger.info(f"Proceeding to upload.")
             boundary = "011000010111000001101001"
             fields = ["provide_transcription", "language", "enable_video_stream", "index_id", "video_url"]
             values = [str(request.provide_transcription).lower(), request.language, str(request.enable_video_stream).lower(), request.index_id, request.video_url]
@@ -401,16 +528,19 @@ class TwelveLabsAPIService:
             )
 
     @bentoml.api
+    @log_function_call()
     async def highlight(self, request: TwelveLabsRequest) -> TwelveLabsResponse:
         """Get highlights from the video."""
         return await self._video_qa_request(request, "highlight")
 
     @bentoml.api
+    @log_function_call()
     async def chapter(self, request: TwelveLabsRequest) -> TwelveLabsResponse:
         """Get chapter segments from the video."""
         return await self._video_qa_request(request, "chapter")
 
     @bentoml.api
+    @log_function_call()
     async def summary(self, request: TwelveLabsRequest) -> TwelveLabsResponse:
         """Get a summary of the video."""
         return await self._video_qa_request(request, "summary")
@@ -424,25 +554,43 @@ class TwelveLabsAPIService:
 )
 class LabARVideoReportingService:
     def __init__(self) -> None:
+        logger.info("Initializing LabARVideoReportingService")
         self.llava = LLaVAVideoService()
         self.twelvelabs = TwelveLabsAPIService()
+        logger.info("LabARVideoReportingService initialization completed")
 
     @bentoml.api(route="/llava/video")
-    async def analyze_video(self, metadata: VideoMetadata, video: Path) -> VideoResponse:
-        return await self.llava.analyze_video(metadata, video)
+    @log_function_call()
+    async def analyze_video(self, metadata: VideoMetadata, video: Path = None) -> VideoResponse:
+        result =  await self.llava.analyze_video(metadata, video)
+        return result
+
+    @bentoml.api(route="/llava/video-file")
+    @log_function_call()
+    async def analyze_video_file(self, metadata: VideoMetadata, video: Path) -> VideoResponse:
+        return await self.llava.analyze_video_file(metadata, video)
 
     @bentoml.api(route="/llava/image")
+    @log_function_call()
     async def analyze_image(self, metadata: ImageMetadata, image: Path = None) -> ImageResponse:
         return await self.llava.analyze_image(metadata, image)
 
+    @bentoml.api(route="/llava/image-file")
+    @log_function_call()
+    async def analyze_image_file(self, metadata: ImageMetadata, image: Path) -> ImageResponse:
+        return await self.llava.analyze_image_file(metadata, image)
+
     @bentoml.api(route="/twelvelabs/summary")
+    @log_function_call()
     async def summary(self, request: TwelveLabsRequest) -> TwelveLabsResponse:
         return await self.twelvelabs.summary(request)
 
     @bentoml.api(route="/twelvelabs/highlights")
+    @log_function_call()
     async def highlight(self, request: TwelveLabsRequest) -> TwelveLabsResponse:
         return await self.twelvelabs.highlight(request)
 
     @bentoml.api(route="/twelvelabs/chapters")
+    @log_function_call()
     async def chapter(self, request: TwelveLabsRequest) -> TwelveLabsResponse:
         return await self.twelvelabs.chapter(request)
