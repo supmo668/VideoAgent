@@ -1,3 +1,6 @@
 [submodule "Annotations/hf_video_annotation"]
 	path = Annotations/hf_video_annotation
 	url = git@github.com:supmo668/hf_video_annotation.git
+[submodule "benchmark"]
+	path = benchmark
+	url = git@github.com:supmo668/labar_science_benchmark.git
