@@ -6,5 +6,4 @@
 data/
 results/
 .env
-temp_frames*
-*.db
+temp_frame
