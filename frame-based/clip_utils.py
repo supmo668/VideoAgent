@@ -10,7 +10,8 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 clip_model, clip_preprocess = clip.load("ViT-B/32", device=device)
 
 # Load BLIP model
-blip_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+blip_processor = BlipProcessor.from_pretrained(
+    "Salesforce/blip-image-captioning-base")
 blip_model = BlipModel.from_pretrained("Salesforce/blip-image-captioning-base").to(device)
 
 def get_text_embedding_clip(text: str) -> np.ndarray:

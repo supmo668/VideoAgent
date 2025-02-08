@@ -1,11 +1,14 @@
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
+try:
+    from typing import Annotated
+except ImportError:
+    from typing_extensions import Annotated
 import asyncio
 
-from bentoml import service
 import bentoml
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from main import (
     process_video_clip_core,
@@ -15,8 +18,9 @@ from main import (
 )
 from models import VideoAnalysisRequest, VideoAnalysisResponse
 
-@service(
-    workers=4,  # Increased workers for better concurrency
+@bentoml.service(
+    name="video_frame_analyzer",
+    workers=1,  # Increased workers for better concurrency
     resources={
         "cpu": "4000m",  # 4 CPU cores
         "memory": "8Gi",  # 8GB RAM
@@ -26,7 +30,6 @@ from models import VideoAnalysisRequest, VideoAnalysisResponse
         "timeout": 3600,  # 1 hour timeout for long video processing
         "max_latency": 300000,  # 5 minutes max latency
         "max_concurrency": 8,  # Maximum concurrent requests
-        "external_queue": True
     }
 )
 class VideoAnalyzerService:
@@ -34,24 +37,31 @@ class VideoAnalyzerService:
         self.cfg = load_config("config.yaml")
         self.cache_db_path = "embeddings_cache.db"
 
-    @bentoml.task
+    @bentoml.api
     async def analyze_video(
         self,
-        video_path: str = Field(...),
-        descriptions: List[str] = Field(...),
-        model_type: str = Field(default="clip"),
-        fps: int = Field(default=30),
-        record_top_k_frames: int = Field(default=20),
-        generate_report: bool = Field(default=True)
+        video_path: str = Field(..., description="Path to the video file"),
+        descriptions: List[str] = Field(..., description="List of descriptions to match against"),
+        model_type: str = Field(default="clip", description="Model type to use (clip or openai)"),
+        fps: int = Field(default=30, description="Frames per second to process"),
+        record_top_k_frames: int = Field(default=20, description="Number of top matching frames to record"),
+        generate_report: bool = Field(default=True, description="Whether to generate a report")
     ) -> VideoAnalysisResponse:
         """
         Analyze a video by processing its frames against given descriptions 
         using either CLIP or OpenAI embedding models.
         """
         try:
-            # Process video with selected model
-            if model_type.lower() == "openai":
-                results = process_video_openai_core(
+            if model_type.lower() == "clip":
+                result = await process_video_clip_core(
+                    video_path=video_path,
+                    user_descs=descriptions,
+                    fps=fps,
+                    record_top_k_frames=record_top_k_frames,
+                    generate_report=generate_report
+                )
+            elif model_type.lower() == "openai":
+                result = await process_video_openai_core(
                     video_path=video_path,
                     user_descs=descriptions,
                     fps=fps,
@@ -59,89 +69,47 @@ class VideoAnalyzerService:
                     generate_report=generate_report
                 )
             else:
-                results = process_video_clip_core(
-                    video_path=video_path,
-                    user_descs=descriptions,
-                    fps=fps,
-                    record_top_k_frames=record_top_k_frames,
-                    generate_report=generate_report
-                )
-
-            if not results:
-                raise bentoml.exceptions.BentoMLException("No results were generated")
-
-            return VideoAnalysisResponse(**results)
-        
+                raise ValueError(f"Unsupported model type: {model_type}")
+            
+            return VideoAnalysisResponse(**result)
         except Exception as e:
-            raise bentoml.exceptions.BentoMLException(str(e))
+            raise ValueError(f"Error processing video: {str(e)}")
 
     @bentoml.api
-    async def get_report_by_type(self, result_dir: str, report_type: str = "local_html") -> str:
+    async def get_report_by_type(self, result_dir: str, report_type: str = "local_html") -> Dict[str, str]:
         """
         Get a specific type of report.
-        
-        Args:
-            result_dir: Directory containing the reports
-            report_type: Type of report to retrieve (local_html, local_pdf, s3_html, s3_pdf)
         """
-        report_paths = {
-            "local_html": "workflow_report_local.html",
-            "local_pdf": "workflow_report_local.pdf",
-            "s3_html": "workflow_report.html",
-            "s3_pdf": "workflow_report.pdf"
-        }
-        
-        if report_type not in report_paths:
-            raise bentoml.exceptions.InvalidArgument(f"Invalid report type. Must be one of: {', '.join(report_paths.keys())}")
-        
-        report_path = Path(result_dir) / report_paths[report_type]
-        if not report_path.exists():
-            raise bentoml.exceptions.NotFound(f"{report_type} report not found")
-        
-        if report_type.endswith('pdf'):
-            # Return binary PDF data
-            return report_path.read_bytes()
+        if report_type == "local_html":
+            report_path = os.path.join(result_dir, "report.html")
+        elif report_type == "local_md":
+            report_path = os.path.join(result_dir, "report.md")
+        elif report_type == "local_pdf":
+            report_path = os.path.join(result_dir, "report.pdf")
+        elif report_type == "s3_html":
+            report_path = os.path.join(result_dir, "report_s3.html")
         else:
-            # Return HTML content
-            return str(report_path.read_text())
+            raise ValueError(f"Unsupported report type: {report_type}")
+            
+        return {"report_path": report_path}
 
-    @bentoml.task
+    @bentoml.api
     async def summarize_video(
         self,
-        video_path: str = Field(...),
-        fps: float = Field(default=30),
-        keep_temp_dir: bool = Field(default=False),
-        config_path: str = Field(default="config.yaml"),
-        cache_db_path: str = Field(default="embeddings_cache.db")
-    ) -> dict:
+        video_path: str = Field(..., description="Path to the video file"),
+        fps: int = Field(default=30, description="Frames per second to process")
+    ) -> Dict[str, Any]:
         """
-        Summarize a video by extracting frames and generating a summary and title.
-        
-        Args:
-            video_path: Path to the input video file.
-            fps: Frames per second to extract from the video.
-            keep_temp_dir: Whether to keep the temporary directory after processing.
-            config_path: Path to the configuration file.
-            cache_db_path: Path to the embeddings cache database.
-        
-        Returns:
-            dict: A dictionary containing the summary and title.
+        Process a video and generate a summary.
         """
         try:
             result = await process_and_summarize_video(
                 video_path=video_path,
-                fps=fps,
-                keep_temp_dir=keep_temp_dir,
-                config_path=config_path,
-                cache_db_path=cache_db_path
+                fps=fps
             )
-            if not result:
-                raise bentoml.exceptions.BentoMLException("Video summarization failed")
-
             return result
-
         except Exception as e:
-            raise bentoml.exceptions.BentoMLException(str(e))
+            raise ValueError(f"Error summarizing video: {str(e)}")
 
 # To start
 # bentoml serve app:VideoAnalyzerService --reload --port 8000

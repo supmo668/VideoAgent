@@ -41,7 +41,8 @@ AWS_ACCESS_KEY = os.getenv('AWS_ACCESS_KEY_ID')
 AWS_SECRET_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
 
 if not all([AWS_REGION, BUCKET_NAME, AWS_ACCESS_KEY, AWS_SECRET_KEY]):
-    raise ValueError("Missing required AWS environment variables. Please check your .env file.")
+    import warnings
+    warnings.warn("Missing required AWS environment variables. Please check your .env file.")
 
 class S3Processor:
     def __init__(self):
@@ -366,6 +367,43 @@ def process_video_openai_core(
         return results
     finally:
         cleanup_environment(temp_dir, keep_temp_dir)
+
+def process_video_clip_core(
+    video_path: str,
+    user_descs: List[str],
+    fps: float = 2.0,
+    config_path: str = "config.yaml",
+    cache_db_path: str = "embeddings_cache.db",
+    keep_temp_dir: bool = True,
+    record_top_k_frames: int = 20,
+    generate_report: bool = True
+) -> Dict[str, Any]:
+    """Process video using CLIP embedding model.
+    
+    Args:
+        video_path (str): Path to the video file
+        user_descs (List[str]): List of descriptions to match against frames
+        fps (float, optional): Frames per second to process. Defaults to 2.0.
+        config_path (str, optional): Path to config file. Defaults to "config.yaml".
+        cache_db_path (str, optional): Path to cache database. Defaults to "embeddings_cache.db".
+        keep_temp_dir (bool, optional): Whether to keep temporary directory. Defaults to True.
+        record_top_k_frames (int, optional): Number of top matching frames to record. Defaults to 20.
+        generate_report (bool, optional): Whether to generate a report. Defaults to True.
+    
+    Returns:
+        Dict[str, Any]: Dictionary containing results and paths to generated files
+    """
+    return process_video_with_model(
+        video_path=video_path,
+        descriptions=user_descs,
+        model="clip",
+        fps=fps,
+        config_path=config_path,
+        cache_db_path=cache_db_path,
+        keep_temp_dir=keep_temp_dir,
+        record_top_k_frames=record_top_k_frames,
+        generate_report=generate_report
+    )
 
 @click.group()
 def cli():
