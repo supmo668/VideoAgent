@@ -63,7 +63,7 @@ class ImageMetadata(BaseModel):
     max_new_tokens: int = Field(DEFAULTS["image"]["max_new_tokens"], description="Maximum number of new tokens to generate")
     context_len: int = Field(DEFAULTS["image"]["context_len"], description="Context length for generation")
 
-class   VideoMetadata(BaseModel):
+class VideoMetadata(BaseModel):
     video_url: Optional[str] = Field(None, description="URL of the video to analyze")
     prompt: str = Field(DEFAULTS["video"]["prompt"], description="Prompt for video analysis")
     temperature: float = Field(DEFAULTS["video"]["temperature"], description="Temperature for generation")
@@ -149,9 +149,9 @@ class LLaVAVideoService:
     def _load_model(self):
         from llava_custom.builder import load_pretrained_model        
         # # Custom configuration to handle meta parameters
-        # config = AutoConfig.from_pretrained(self.pretrained)
-        # config.use_cache = True
-        # config.torch_dtype = torch.float16
+        config = AutoConfig.from_pretrained(self.pretrained)
+        config.use_cache = True
+        config.torch_dtype = torch.bfloat16
         
         tokenizer, model, image_processor, context_len = load_pretrained_model(
             self.pretrained, 
