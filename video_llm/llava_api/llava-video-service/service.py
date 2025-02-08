@@ -11,7 +11,7 @@ import uuid
 import warnings
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, Tuple
+from typing import Any, Dict, List, Optional, Union, Tuple, Generator
 import yaml
 
 # Third-party imports
@@ -63,7 +63,7 @@ class ImageMetadata(BaseModel):
     max_new_tokens: int = Field(DEFAULTS["image"]["max_new_tokens"], description="Maximum number of new tokens to generate")
     context_len: int = Field(DEFAULTS["image"]["context_len"], description="Context length for generation")
 
-class VideoMetadata(BaseModel):
+class   VideoMetadata(BaseModel):
     video_url: Optional[str] = Field(None, description="URL of the video to analyze")
     prompt: str = Field(DEFAULTS["video"]["prompt"], description="Prompt for video analysis")
     temperature: float = Field(DEFAULTS["video"]["temperature"], description="Temperature for generation")
@@ -112,33 +112,36 @@ class TwelveLabsResponse(BaseModel):
 # LLaVA Service
 @bentoml.service(
     resources=SERVICE_CONFIG["resources"],
-    traffic=SERVICE_CONFIG["traffic"]
+    traffic=SERVICE_CONFIG["traffic"],
+    worker=1,
+    concurrency=1
 )
 class LLaVAVideoService:
+    _model_instance: tuple = None
     _model_lock = asyncio.Lock()
-    _model_instance = None  # Class-level attribute to store the model
+    
     def __init__(self) -> None:
         logger.info("Initializing LLaVAVideoService")
         self.pretrained = MODEL_CONFIG["pretrained"]
         self.model_name = MODEL_CONFIG["model_name"]
         self.device = MODEL_CONFIG["device"]
-
+        
         torch.cuda.empty_cache()
         os.environ['PYTORCH_CUDA_ALLOC_CONF'] = ENV_CONFIG["cuda_alloc_conf"]
         
         logger.debug(f"Loading model with config: {sanitize_log_data(MODEL_CONFIG)}")
         
-        if LLaVAVideoService._model_instance is None:
+        if self._model_instance is None:
             self.tokenizer, self.model, self.image_processor, self.context_len = self._load_model()
-            LLaVAVideoService._model_instance = (self.tokenizer, self.model, self.image_processor, self.context_len)
+            self._model_instance = (self.tokenizer, self.model, self.image_processor, self.context_len)
         else:
-            self.tokenizer, self.model, self.image_processor, self.context_len = LLaVAVideoService._model_instance
-
+            self.tokenizer, self.model, self.image_processor, self.context_len = self._model_instance
+        
         if hasattr(self.model, 'get_vision_tower'):
             vision_tower = self.model.get_vision_tower()
             if hasattr(vision_tower, 'vision_tower'):
                 vision_tower.vision_tower = vision_tower.vision_tower.to(dtype=torch.float16)
-
+        
         self.model.eval()
         logger.info("LLaVAVideoService initialization completed")
 
@@ -163,28 +166,27 @@ class LLaVAVideoService:
 
     @log_function_call()
     @contextmanager
-    def _temp_file_context(self, content: bytes, suffix: str = "") -> str:
-        temp_dir = Path(tempfile.mkdtemp(prefix=f"llava_{uuid.uuid4()}_"))
-        temp_path = temp_dir / f"{uuid.uuid4()}{suffix}"
-        try:
-            with open(temp_path, "wb") as f:
-                f.write(content)
-            yield str(temp_path)
-        finally:
+    def _temp_file_context(self, content: bytes, suffix: str = "") -> Generator[Path, None, None]:
+        """Create a temporary file with the given content and yield its path."""
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
             try:
-                if temp_path.exists():
-                    temp_path.unlink()
-                if temp_dir.exists():
-                    temp_dir.rmdir()
-            except Exception as e:
-                logger.warning(f"Failed to cleanup temporary file {temp_path}: {str(e)}")
+                tmp.write(content)
+                tmp.flush()
+                yield Path(tmp.name)
+            finally:
+                try:
+                    os.unlink(tmp.name)
+                except Exception as e:
+                    logger.error(f"Error deleting temporary file: {str(e)}")
 
     @log_function_call()
     async def _download_file(self, url: str) -> bytes:
+        """Download a file from a URL and return its content as bytes."""
+        logger.info(f"Downloading file from {url}")
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
                 if response.status != 200:
-                    raise Exception(f"Failed to download file: {response.status}")
+                    raise ValueError(f"Failed to download file: {response.status}")
                 return await response.read()
 
     @log_function_call()
@@ -201,35 +203,39 @@ class LLaVAVideoService:
             - List of frame times
             - Total video duration
         """
+        logger.debug(f"Processing video: {video_path}")
         try:
-            max_frames_num = VIDEO_CONFIG["max_frames"]  # Same as template
-            vr = VideoReader(str(video_path), ctx=cpu(0))
-            total_frames_num = len(vr)
+            # Convert to string path if it's a Path object
+            video_path = str(video_path) if isinstance(video_path, Path) else video_path
+            vr = VideoReader(video_path, ctx=cpu(0))
+            total_frames = len(vr)
+            duration = total_frames / vr.get_avg_fps()
             
-            # Calculate frame indices and times
-            frame_idx = []
-            frame_time = []
-            for i in range(0, total_frames_num, int(vr.get_avg_fps() / fps)):
-                frame_idx.append(i)
-                frame_time.append(i / vr.get_avg_fps())
-                if len(frame_idx) == max_frames_num:
-                    break
+            # Calculate frame indices based on desired fps
+            frame_indices = []
+            frame_times = []
+            target_interval = vr.get_avg_fps() / fps
+            current_idx = 0
             
-            video_time = total_frames_num / vr.get_avg_fps()
+            while current_idx < total_frames:
+                frame_indices.append(int(current_idx))
+                frame_times.append(current_idx / vr.get_avg_fps())
+                current_idx += target_interval
             
-            # Get frames using decord
-            frames = vr.get_batch(frame_idx).asnumpy()
-            return frames, frame_time, video_time
-            
+            # Read frames
+            frames = vr.get_batch(frame_indices).asnumpy()
+            logger.debug(f"Processed {len(frames)} frames from video")
+            return frames, frame_times, duration
         except Exception as e:
-            raise Exception(f"Error processing video: {str(e)}")
-            
+            logger.error(f"Error processing video: {str(e)}")
+            raise
+
     @log_function_call()
-    async def _process_image(self, image_path: Union[str, bytes], is_bytes: bool = False) -> Tuple[np.ndarray, List[float], float]:
+    async def _process_image(self, image_path: Union[str, bytes, Path], is_bytes: bool = False) -> Tuple[np.ndarray, List[float], float]:
         """Process an image from either a file path or bytes content.
         
         Args:
-            image_path: Either a file path (str) or image content (bytes)
+            image_path: Either a file path (str/Path) or image content (bytes)
             is_bytes: Whether the input is bytes content
             
         Returns:
@@ -240,12 +246,14 @@ class LLaVAVideoService:
         """
         try:
             if is_bytes:
-                with self._temp_file_context(image_path, ".jpg") as temp_image:
-                    image = np.array(Image.open(temp_image))
+                image = np.array(Image.open(io.BytesIO(image_path)))
             else:
+                # Convert Path to string if necessary
+                image_path = str(image_path) if isinstance(image_path, Path) else image_path
                 image = np.array(Image.open(image_path))
             return np.expand_dims(image, 0), [], 0
         except Exception as e:
+            logger.error(f"Error processing image: {str(e)}")
             raise Exception(f"Error processing image: {str(e)}")
 
     @log_function_call()
@@ -328,12 +336,29 @@ class LLaVAVideoService:
     @bentoml.api
     @log_function_call()
     async def analyze_video_file(self, metadata: VideoMetadata, video: Path) -> VideoResponse:
+        """Analyze a video file."""
         try:
-            frames, frame_time, video_time = await self._process_video(str(video), metadata.fps)
-            metadata.context_len = video_time  # Update context_len with actual video time
-            response = await self._generate_response(
-                metadata.prompt, frames, metadata, frame_time=frame_time, video_time=video_time)
+            frames, frame_times, duration = await self._process_video(video, metadata.fps)
+            response = await self._generate_response(metadata.prompt, frames, metadata, frame_times, duration)
             return VideoResponse(response=response)
+        except Exception as e:
+            logger.error(f"Error analyzing video file: {str(e)}")
+            return VideoResponse(
+                status="error",
+                error=str(e),
+            )
+    
+    @bentoml.api
+    @log_function_call()
+    async def analyze_video(self, metadata: VideoMetadata, video: Path = None) -> VideoResponse:
+        try:
+            if metadata.video_url:
+                video_content = await self._download_file(metadata.video_url)
+                with self._temp_file_context(video_content, ".mp4") as temp_video:
+                    result = await self.analyze_video_file(metadata, temp_video)
+                    return result
+            else:
+                raise ValueError("video_url is required for analyze_video")
         except Exception as e:
             return VideoResponse(
                 status="error",
@@ -345,11 +370,12 @@ class LLaVAVideoService:
     async def analyze_image_file(self, metadata: ImageMetadata, image: Path) -> ImageResponse:
         """Analyze a single image from a file."""
         try:
-            is_bytes = isinstance(image, bytes)
-            frames, frame_time, video_time = await self._process_image(image if is_bytes else str(image), is_bytes)
+            logger.info(f"Processing image file: {image}")
+            frames, frame_time, video_time = await self._process_image(image, is_bytes=False)
             response = await self._generate_response(metadata.prompt, frames, metadata)
             return ImageResponse(response=response)
         except Exception as e:
+            logger.error(f"Error analyzing image file: {str(e)}")
             return ImageResponse(
                 status="error",
                 error=str(e),
@@ -372,21 +398,6 @@ class LLaVAVideoService:
                 error=str(e),
             )
 
-    @bentoml.api
-    @log_function_call()
-    async def analyze_video(self, metadata: VideoMetadata, video: Path = None) -> VideoResponse:
-        try:
-            if metadata.video_url:
-                video_content = await self._download_file(metadata.video_url)
-                with self._temp_file_context(video_content, ".mp4") as temp_video:
-                    return await self.analyze_video_file(metadata, temp_video)
-            else:
-                raise ValueError("video_url is required for analyze_video")
-        except Exception as e:
-            return VideoResponse(
-                status="error",
-                error=str(e),
-            )
 
 # TwelveLabs Service
 @bentoml.service(
@@ -502,6 +513,7 @@ class TwelveLabsAPIService:
                                 task_id=None,
                                 video_id=video["_id"]
                             )
+                
             logger.info(f"Proceeding to upload.")
             boundary = "011000010111000001101001"
             fields = ["provide_transcription", "language", "enable_video_stream", "index_id", "video_url"]
@@ -559,38 +571,37 @@ class LabARVideoReportingService:
         self.twelvelabs = TwelveLabsAPIService()
         logger.info("LabARVideoReportingService initialization completed")
 
+    
     @bentoml.api(route="/llava/video")
-    @log_function_call()
     async def analyze_video(self, metadata: VideoMetadata, video: Path = None) -> VideoResponse:
-        result =  await self.llava.analyze_video(metadata, video)
-        return result
+        return await self.llava.analyze_video(metadata, video)
 
+    
     @bentoml.api(route="/llava/video-file")
-    @log_function_call()
     async def analyze_video_file(self, metadata: VideoMetadata, video: Path) -> VideoResponse:
         return await self.llava.analyze_video_file(metadata, video)
 
+    
     @bentoml.api(route="/llava/image")
-    @log_function_call()
     async def analyze_image(self, metadata: ImageMetadata, image: Path = None) -> ImageResponse:
         return await self.llava.analyze_image(metadata, image)
 
+    
     @bentoml.api(route="/llava/image-file")
-    @log_function_call()
     async def analyze_image_file(self, metadata: ImageMetadata, image: Path) -> ImageResponse:
         return await self.llava.analyze_image_file(metadata, image)
 
+    
     @bentoml.api(route="/twelvelabs/summary")
-    @log_function_call()
     async def summary(self, request: TwelveLabsRequest) -> TwelveLabsResponse:
         return await self.twelvelabs.summary(request)
 
+    
     @bentoml.api(route="/twelvelabs/highlights")
-    @log_function_call()
     async def highlight(self, request: TwelveLabsRequest) -> TwelveLabsResponse:
         return await self.twelvelabs.highlight(request)
 
+    
     @bentoml.api(route="/twelvelabs/chapters")
-    @log_function_call()
     async def chapter(self, request: TwelveLabsRequest) -> TwelveLabsResponse:
         return await self.twelvelabs.chapter(request)

@@ -5,6 +5,7 @@ import json
 from datetime import datetime
 from functools import wraps
 from typing import Any, Optional, Dict
+import asyncio
 
 # Create logs directory if it doesn't exist
 LOGS_DIR = "logs"
@@ -83,39 +84,70 @@ def sanitize_log_data(data: Any) -> Any:
 def log_function_call(skip_args: bool = False):
     """
     Decorator to log function entry, exit, and execution time.
+    Supports both sync and async functions.
     
     Args:
         skip_args (bool): If True, function arguments won't be logged
     """
     def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            logger = CustomLogger().get_logger()
-            func_name = func.__name__
-            
-            # Log function entry
-            if not skip_args:
-                # Sanitize and format arguments
-                args_repr = [sanitize_log_data(arg) for arg in args]
-                kwargs_repr = {k: sanitize_log_data(v) for k, v in kwargs.items()}
-                logger.debug(f"Entering {func_name} - Args: {args_repr}, Kwargs: {kwargs_repr}")
-            else:
-                logger.debug(f"Entering {func_name}")
+        if asyncio.iscoroutinefunction(func):
+            @wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                logger = CustomLogger().get_logger()
+                func_name = func.__name__
+                
+                # Log function entry
+                if not skip_args:
+                    # Sanitize and format arguments
+                    args_repr = [sanitize_log_data(arg) for arg in args]
+                    kwargs_repr = {k: sanitize_log_data(v) for k, v in kwargs.items()}
+                    logger.debug(f"Entering {func_name} - Args: {args_repr}, Kwargs: {kwargs_repr}")
+                else:
+                    logger.debug(f"Entering {func_name}")
 
-            start_time = datetime.now()
-            try:
-                result = func(*args, **kwargs)
-                # Log successful execution
-                execution_time = (datetime.now() - start_time).total_seconds()
-                logger.debug(f"Exiting {func_name} - Execution time: {execution_time:.2f}s")
-                return result
-            except Exception as e:
-                # Log exception
-                execution_time = (datetime.now() - start_time).total_seconds()
-                logger.exception(f"Exception in {func_name} after {execution_time:.2f}s: {str(e)}")
-                raise
+                start_time = datetime.now()
+                try:
+                    result = await func(*args, **kwargs)
+                    # Log successful execution
+                    execution_time = (datetime.now() - start_time).total_seconds()
+                    logger.debug(f"Exiting {func_name} - Execution time: {execution_time:.2f}s")
+                    return result
+                except Exception as e:
+                    # Log exception
+                    execution_time = (datetime.now() - start_time).total_seconds()
+                    logger.exception(f"Exception in {func_name} after {execution_time:.2f}s: {str(e)}")
+                    raise
 
-        return wrapper
+            return async_wrapper
+        else:
+            @wraps(func)
+            def sync_wrapper(*args, **kwargs):
+                logger = CustomLogger().get_logger()
+                func_name = func.__name__
+                
+                # Log function entry
+                if not skip_args:
+                    # Sanitize and format arguments
+                    args_repr = [sanitize_log_data(arg) for arg in args]
+                    kwargs_repr = {k: sanitize_log_data(v) for k, v in kwargs.items()}
+                    logger.debug(f"Entering {func_name} - Args: {args_repr}, Kwargs: {kwargs_repr}")
+                else:
+                    logger.debug(f"Entering {func_name}")
+
+                start_time = datetime.now()
+                try:
+                    result = func(*args, **kwargs)
+                    # Log successful execution
+                    execution_time = (datetime.now() - start_time).total_seconds()
+                    logger.debug(f"Exiting {func_name} - Execution time: {execution_time:.2f}s")
+                    return result
+                except Exception as e:
+                    # Log exception
+                    execution_time = (datetime.now() - start_time).total_seconds()
+                    logger.exception(f"Exception in {func_name} after {execution_time:.2f}s: {str(e)}")
+                    raise
+
+            return sync_wrapper
     return decorator
 
 # Get logger instance
