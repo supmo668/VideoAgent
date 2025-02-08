@@ -25,16 +25,17 @@ pip install -r requirements.txt
 ## Usage
 The tool is accessed through a command-line interface (CLI). Below are the main commands and their usage:
 
-### 1. CLIP Embedding
-To process a video using the CLIP embedding model, use the following command:
+### 1. Image Embedding
+To process a video using the selected embedding model (CLIP, BLIP, or combined), use the following command:
 
 ```bash
-python main.py clip-embed --video_path PATH_TO_VIDEO --descriptions "DESCRIPTION1" "DESCRIPTION2" --fps FRAMES_PER_SECOND --generate-report
+python main.py image-embed --video_path PATH_TO_VIDEO --descriptions "DESCRIPTION1" "DESCRIPTION2" --model [clip|blip|combined] --fps FRAMES_PER_SECOND --generate-report
 ```
 
 **Options**:
 - `--video_path`: Path to the input video file.
 - `--descriptions`: List of descriptions to search for within the video. You can provide multiple descriptions enclosed in quotes.
+- `--model`: Choose the embedding model to use (`clip`, `blip`, or `combined`). Default is `blip`.
 - `--fps` (optional): Target frames per second for extraction. Default is 30.
 - `--generate-report` (optional): Flag to generate a report with results. Reports are saved in markdown, HTML, and PDF formats.
 
@@ -45,7 +46,7 @@ For processing a video using OpenAI's embedding model, use the command:
 python main.py openai-embed --video_path PATH_TO_VIDEO --descriptions "DESCRIPTION1" "DESCRIPTION2" --fps FRAMES_PER_SECOND --generate-report
 ```
 
-The options are similar to those for the CLIP embedding command.
+The options are similar to those for the Image Embedding command.
 
 ### 3. Video Summarization
 To generate a summary of the video, use:
@@ -54,7 +55,8 @@ To generate a summary of the video, use:
 python main.py summarize --video_path PATH_TO_VIDEO --fps FRAMES_PER_SECOND
 ```
 
-This command processes the video and outputs a title and summary based on the video content.
+## Updated Structure
+- `main.py` and `app.py` are now located at the top level of the `frame-based` directory for easier access to CLI and BentoML service.
 
 ## Configuration
 The tool allows for some customization through a `config.yaml` file. You can adjust settings related to the models, embedding processors, and other system-level configurations. Ensure this file is correctly set up before running the tool.

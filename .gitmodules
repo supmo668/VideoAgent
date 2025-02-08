@@ -1,6 +1,9 @@
-[submodule "Annotations/video_annotation_hf"]
-	path = Annotations/video_annotation_hf
-	url = git@github.com:supmo668/video_annotation_hf.git
+[submodule "Annotations/hf_video_annotation"]
+	path = Annotations/hf_video_annotation
+	url = git@github.com:supmo668/hf_video_annotation.git
+[submodule "benchmark"]
+	path = benchmark
+	url = git@github.com:supmo668/labar_science_benchmark.git
 [submodule "candidate_framework/Ask-Anything"]
 	path = candidate_framework/Ask-Anything
 	url = git@github.com:OpenGVLab/Ask-Anything.git

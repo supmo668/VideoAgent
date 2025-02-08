@@ -1,0 +1,1 @@
+python main.py clip-embed --video_path https://myimagebucketlabar.s3.us-east-2.amazonaws.com/V1_end.mp4 --descriptions "Pouring water into red cabbage filled beaker" --descriptions "Turning on heat plate" --descriptions "Putting red cabbage solution into test tube (first time)" --descriptions "Putting red cabbage solution into test tube (second time)" --generate-report
