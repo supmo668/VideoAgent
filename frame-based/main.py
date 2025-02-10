@@ -1,4 +1,3 @@
-# main.py
 import os
 import click
 import uuid
@@ -26,10 +25,9 @@ from embedding_utils import (
     save_and_report_results,
 )
 from summarization_utils import app, summarize_and_generate_title_async
-from dotenv import load_dotenv
-
-from s3 import S3Module
 from models import VideoAnalysisRequest, VideoAnalysisResponse
+from dotenv import load_dotenv
+from s3 import S3Module
 
 # Load environment variables from .env file
 load_dotenv()
@@ -333,7 +331,7 @@ def process_video_openai_core(
     keep_temp_dir: bool = True,
     record_top_k_frames: int = 20,
     generate_report: bool = True
-) -> Optional[Dict[str, str]]:
+) -> Dict[str, str]:
     """Core function to process video using OpenAI embedding model."""
     cfg = load_config(config_path)
     try:
@@ -352,7 +350,7 @@ def process_video_openai_core(
         processor = OpenAIEmbeddingProcessor(
             cfg["system_prompt"], cfg["vision_prompt"], cache_db_path)
 
-        results: Optional[Dict[str, str]] = process_video_with_processor(
+        results = process_video_with_processor(
             processor=processor,
             frames=frames,
             user_descs=request.user_descs,
@@ -362,11 +360,53 @@ def process_video_openai_core(
             model_type=request.model_type,
             generate_report=request.generate_report
         )
-        if results:
-            print(f"Reports saved to {results['local_html']} and {results['local_pdf']}.")
-        return results
+
+        if not results:
+            raise ValueError("No results returned from video processing")
+
+        # Initialize S3 processor
+        s3_processor = S3Processor()
+        
+        # Upload reports to S3
+        s3_markdown = s3_processor._upload_to_s3(results['markdown'], f"reports/{Path(results['markdown']).name}")
+        s3_html = s3_processor._upload_to_s3(results['html'], f"reports/{Path(results['html']).name}")
+        s3_pdf = s3_processor._upload_to_s3(results['pdf'], f"reports/{Path(results['pdf']).name}")
+
+        # Upload frames to S3 and get their URLs
+        key_frames = {}
+        frame_descriptions = {}
+        for desc in user_descs:
+            desc_frames_dir = Path(result_dir) / desc.replace(" ", "_")
+            if desc_frames_dir.exists():
+                frame_urls = []
+                for frame_file in desc_frames_dir.glob("*.jpg"):
+                    s3_key = f"frames/{desc.replace(' ', '_')}/{frame_file.name}"
+                    frame_urls.append(s3_processor._upload_to_s3(str(frame_file), s3_key))
+                key_frames[desc] = frame_urls
+                
+                # Get frame descriptions if available
+                desc_file = desc_frames_dir / "descriptions.json"
+                if desc_file.exists():
+                    with open(desc_file, 'r') as f:
+                        frame_descriptions[desc] = json.load(f)
+                else:
+                    frame_descriptions[desc] = None
+
+        return {
+            "local_markdown": results['markdown'],
+            "local_html": results['html'],
+            "local_pdf": results['pdf'],
+            "s3_markdown": s3_markdown,
+            "s3_html": s3_html,
+            "s3_pdf": s3_pdf,
+            "key_frames": key_frames,
+            "frame_descriptions": frame_descriptions,
+            "result_dir": str(result_dir),
+            "frames_dir": str(temp_dir)
+        }
     finally:
-        cleanup_environment(temp_dir, keep_temp_dir)
+        if not keep_temp_dir:
+            cleanup_environment(temp_dir, keep_temp_dir)
 
 def process_video_clip_core(
     video_path: str,
@@ -393,17 +433,79 @@ def process_video_clip_core(
     Returns:
         Dict[str, Any]: Dictionary containing results and paths to generated files
     """
-    return process_video_with_model(
-        video_path=video_path,
-        descriptions=user_descs,
-        model="clip",
-        fps=fps,
-        config_path=config_path,
-        cache_db_path=cache_db_path,
-        keep_temp_dir=keep_temp_dir,
-        record_top_k_frames=record_top_k_frames,
-        generate_report=generate_report
-    )
+    cfg = load_config(config_path)
+    try:
+        request = VideoAnalysisRequest(
+            video_path=video_path,
+            user_descs=user_descs,
+            model_type="clip",
+            fps=fps,
+            record_top_k_frames=record_top_k_frames,
+            generate_report=generate_report
+        )
+        
+        temp_dir, result_dir = setup_processing_environment(
+            request.video_path, cache_db_path, keep_temp_dir, suffix="_clip")
+        frames: List[Tuple[int, str]] = extract_frames(request.video_path, temp_dir, request.fps)
+        processor = ClipEmbeddingProcessor(cache_db_path)
+
+        results = process_video_with_processor(
+            processor=processor,
+            frames=frames,
+            user_descs=request.user_descs,
+            cfg=cfg,
+            result_dir=result_dir,
+            record_top_k_frames=request.record_top_k_frames,
+            model_type=request.model_type,
+            generate_report=request.generate_report
+        )
+
+        if not results:
+            raise ValueError("No results returned from video processing")
+
+        # Initialize S3 processor
+        s3_processor = S3Processor()
+        
+        # Upload reports to S3
+        s3_markdown = s3_processor._upload_to_s3(results['markdown'], f"reports/{Path(results['markdown']).name}")
+        s3_html = s3_processor._upload_to_s3(results['html'], f"reports/{Path(results['html']).name}")
+        s3_pdf = s3_processor._upload_to_s3(results['pdf'], f"reports/{Path(results['pdf']).name}")
+
+        # Upload frames to S3 and get their URLs
+        key_frames = {}
+        frame_descriptions = {}
+        for desc in user_descs:
+            desc_frames_dir = Path(result_dir) / desc.replace(" ", "_")
+            if desc_frames_dir.exists():
+                frame_urls = []
+                for frame_file in desc_frames_dir.glob("*.jpg"):
+                    s3_key = f"frames/{desc.replace(' ', '_')}/{frame_file.name}"
+                    frame_urls.append(s3_processor._upload_to_s3(str(frame_file), s3_key))
+                key_frames[desc] = frame_urls
+                
+                # Get frame descriptions if available
+                desc_file = desc_frames_dir / "descriptions.json"
+                if desc_file.exists():
+                    with open(desc_file, 'r') as f:
+                        frame_descriptions[desc] = json.load(f)
+                else:
+                    frame_descriptions[desc] = None
+
+        return {
+            "local_markdown": results['markdown'],
+            "local_html": results['html'],
+            "local_pdf": results['pdf'],
+            "s3_markdown": s3_markdown,
+            "s3_html": s3_html,
+            "s3_pdf": s3_pdf,
+            "key_frames": key_frames,
+            "frame_descriptions": frame_descriptions,
+            "result_dir": str(result_dir),
+            "frames_dir": str(temp_dir)
+        }
+    finally:
+        if not keep_temp_dir:
+            cleanup_environment(temp_dir, keep_temp_dir)
 
 @click.group()
 def cli():
