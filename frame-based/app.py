@@ -35,7 +35,7 @@ class VideoAnalyzerService:
         self.cache_db_path = "embeddings_cache.db"
 
     @bentoml.task
-    async def analyze_video(
+    async def videoQA(
         self,
         video_path: str = Field(...),
         descriptions: List[str] = Field(...),
@@ -92,7 +92,9 @@ class VideoAnalyzerService:
         }
         
         if report_type not in report_paths:
-            raise bentoml.exceptions.InvalidArgument(f"Invalid report type. Must be one of: {', '.join(report_paths.keys())}")
+            raise bentoml.exceptions.InvalidArgument(
+                f"Invalid report type. Must be one of: {', '.join(report_paths.keys())}"
+            )
         
         report_path = Path(result_dir) / report_paths[report_type]
         if not report_path.exists():
