@@ -2,7 +2,7 @@ model:
   pretrained: "lmms-lab/LLaVA-Video-7B-Qwen2"
   model_name: "llava_qwen"
   device: "cuda"
-  torch_dtype: "bfloat16"
+  torch_dtype: "float16"
   device_map: "auto"
   load_4bit: true
 
@@ -14,22 +14,22 @@ service:
     concurrency: 1
 
 video:
-  max_frames: 64
-  default_fps: 8
+  max_frames: 16
+  default_fps: 1
+  force_sample: true
+  chunk_size: 8
 
 defaults:
   image:
     prompt: "Describe this image"
     temperature: 0.2
-    max_new_tokens: 512
-    context_len: 1024
+    max_new_tokens: 4096
 
   video:
-    prompt: "Describe this video"
+    prompt: "Please describe this video in detail."
     temperature: 0.2
-    max_new_tokens: 512
-    context_len: 1024
-    fps: 8
+    max_new_tokens: 4096
+    fps: 1
 
   twelvelabs:
     base_url: "https://api.twelvelabs.io/v1.3"
