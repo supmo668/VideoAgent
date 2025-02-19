@@ -13,6 +13,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, Tuple, Generator
 import yaml
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 # Third-party imports
 import aiohttp
@@ -56,18 +58,21 @@ tracing_config = TracingConfig()
 tracing_config.enable_tracing()
 
 # Model request/response classes
-class ImageRequestMetadata(BaseModel):
-    image_url: Optional[str] = Field(None, description="URL of the image to analyze")
-    prompt: str = Field(DEFAULTS["image"]["prompt"], description="Prompt for image analysis")
+class ImageMetadata(BaseModel):
+    """Metadata for image analysis."""
+    prompt: str = Field(DEFAULTS["image"]["prompt"], description="Prompt name or text for image analysis")
     temperature: float = Field(DEFAULTS["image"]["temperature"], description="Temperature for generation")
     max_new_tokens: int = Field(DEFAULTS["image"]["max_new_tokens"], description="Maximum number of new tokens to generate")
+    load_from_db: bool = Field(SERVICE_CONFIG.get("load_from_db", True), description="Whether to load prompt from database")
 
-class VideoRequestMetadata(BaseModel):
+class VideoMetadata(BaseModel):
+    """Metadata for video analysis."""
     video_url: Optional[str] = Field(None, description="URL of the video to analyze")
-    prompt: str = Field(DEFAULTS["video"]["prompt"], description="Prompt for video analysis")
+    prompt: str = Field(DEFAULTS["video"]["prompt"], description="Prompt name or text for video analysis")
     temperature: float = Field(DEFAULTS["video"]["temperature"], description="Temperature for generation")
     max_new_tokens: int = Field(DEFAULTS["video"]["max_new_tokens"], description="Maximum number of new tokens to generate")
     fps: int = Field(DEFAULTS["video"]["fps"], description="Frames per second to extract")
+    load_from_db: bool = Field(SERVICE_CONFIG.get("load_from_db", True), description="Whether to load prompt from database")
 
 class ImageResponse(BaseModel):
     response: Optional[str] = Field(None, description="Generated response")
@@ -80,11 +85,11 @@ class VideoResponse(BaseModel):
     error: Optional[str] = Field(None, description="Error message if any")
 
 class LlavaVideoRequest(BaseModel):
-    metadata: VideoRequestMetadata = Field(..., description="Metadata for the video llava workflow")
+    metadata: VideoMetadata = Field(..., description="Metadata for the video llava workflow")
     video: Optional[Path] = Field(None, description="Video file")
 
 class LlavaImageRequest(BaseModel):
-    metadata: ImageRequestMetadata = Field(..., description="Metadata for the image llava workflow")
+    metadata: ImageMetadata = Field(..., description="Metadata for the image llava workflow")
     image: Optional[Path] = Field(None, description="Image file")
 
 class TwelveLabsRequest(BaseModel):
@@ -124,6 +129,24 @@ class LLaVAVideoService:
         
         # Set device from config
         self.device = MODEL_CONFIG["device"]
+        
+        # Load environment variables from .env file
+        load_dotenv()
+        
+        # Get database connection string from environment
+        self.DATABASE_CONN_URI = os.getenv('DATABASE_CONN_URI')
+        
+        # Initialize database connection if needed
+        self.load_from_db = SERVICE_CONFIG.get("load_from_db", True)
+        if self.load_from_db:
+            if not self.DATABASE_CONN_URI:
+                raise ValueError("DATABASE_CONN_URI environment variable not set")
+            try:
+                self.db_conn = psycopg2.connect(self.DATABASE_CONN_URI)
+                logger.info("Successfully connected to database")
+            except Exception as e:
+                logger.error(f"Error connecting to database: {str(e)}")
+                raise
         
         # Clear CUDA cache and set environment
         torch.cuda.empty_cache()
@@ -274,7 +297,7 @@ class LLaVAVideoService:
         self, 
         prompt: str, 
         frames: np.ndarray, 
-        metadata: Union[ImageRequestMetadata, VideoRequestMetadata],
+        metadata: Union[ImageMetadata, VideoMetadata],
         frame_time: List[float] = None,
         video_time: float = None
     ) -> str:
@@ -290,7 +313,7 @@ class LLaVAVideoService:
             torch.cuda.empty_cache()
             
             # Prepare conversation
-            conv_template = "qwen_1_5"
+            conv_template = "v1"
             
             # Add time instruction for videos
             if frame_time is not None and video_time is not None:
@@ -304,8 +327,24 @@ class LLaVAVideoService:
             conv.append_message(conv.roles[1], None)
             prompt = conv.get_prompt()
             
+            # Get actual prompt from database if enabled in metadata
+            if metadata.load_from_db:
+                try:
+                    actual_prompt = self._get_prompt_from_db(prompt, metadata)
+                    logger.info(f"Using prompt from database: {actual_prompt}")
+                except ValueError as e:
+                    logger.error(str(e))
+                    raise
+            else:
+                actual_prompt = prompt
+
             logger.debug("Generating response...")
-            input_ids = tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors='pt').unsqueeze(0)
+            input_ids = tokenizer_image_token(
+                actual_prompt, 
+                self.tokenizer, 
+                IMAGE_TOKEN_INDEX, 
+                return_tensors='pt'
+            ).unsqueeze(0)
             input_ids = input_ids.to(self.device)
             
             # Create attention mask
@@ -332,6 +371,27 @@ class LLaVAVideoService:
             
         except Exception as e:
             logger.error(f"Error generating response: {str(e)}")
+            raise
+
+    def _get_prompt_from_db(self, prompt_name: str, metadata: Union[ImageMetadata, VideoMetadata]) -> str:
+        """Get prompt from database by name if load_from_db is enabled in metadata."""
+        if not metadata.load_from_db:
+            return prompt_name
+            
+        try:
+            with self.db_conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT prompt FROM prompts WHERE name = %s AND type = 'format_instructions'",
+                    (prompt_name,)
+                )
+                result = cur.fetchone()
+                
+                if not result:
+                    raise ValueError(f"No prompt found with name '{prompt_name}' and type 'format_instructions'")
+                    
+                return result['prompt']
+        except Exception as e:
+            logger.error(f"Error fetching prompt from database: {str(e)}")
             raise
 
     @log_function_call()
@@ -362,7 +422,7 @@ class LLaVAVideoService:
 
     @bentoml.api
     @log_function_call()
-    async def analyze_video_file(self, metadata: VideoRequestMetadata, video: Path) -> VideoResponse:
+    async def analyze_video_file(self, metadata: VideoMetadata, video: Path) -> VideoResponse:
         """Analyze a video file."""
         try:
             # Process video with same settings as LLaVA-Video-7B-Qwen2.py
@@ -393,7 +453,7 @@ class LLaVAVideoService:
 
     @bentoml.api
     @log_function_call()
-    async def analyze_video(self, metadata: VideoRequestMetadata) -> VideoResponse:
+    async def analyze_video(self, metadata: VideoMetadata) -> VideoResponse:
         """Analyze a video from URL."""
         try:
             if not metadata.video_url:
@@ -425,7 +485,7 @@ class LLaVAVideoService:
 
     @bentoml.api
     @log_function_call()
-    async def analyze_image_file(self, metadata: ImageRequestMetadata, image: Path) -> ImageResponse:
+    async def analyze_image_file(self, metadata: ImageMetadata, image: Path) -> ImageResponse:
         """Analyze a single image from a file."""
         try:
             logger.info(f"Processing image file: {image}")
@@ -441,7 +501,7 @@ class LLaVAVideoService:
 
     @bentoml.api
     @log_function_call()
-    async def analyze_image(self, metadata: ImageRequestMetadata, image: Path = None) -> ImageResponse:
+    async def analyze_image(self, metadata: ImageMetadata, image: Path = None) -> ImageResponse:
         """Analyze a single image from URL."""
         try:
             if metadata.image_url:
@@ -631,22 +691,22 @@ class LabARVideoReportingService:
 
     
     @bentoml.api(route="/llava/video")
-    async def analyze_video(self, metadata: VideoRequestMetadata, video: Path = None) -> VideoResponse:
+    async def analyze_video(self, metadata: VideoMetadata, video: Path = None) -> VideoResponse:
         return await self.llava.analyze_video(metadata)
 
     
     @bentoml.api(route="/llava/video-file")
-    async def analyze_video_file(self, metadata: VideoRequestMetadata, video: Path) -> VideoResponse:
+    async def analyze_video_file(self, metadata: VideoMetadata, video: Path) -> VideoResponse:
         return await self.llava.analyze_video_file(metadata, video)
 
     
     @bentoml.api(route="/llava/image")
-    async def analyze_image(self, metadata: ImageRequestMetadata, image: Path = None) -> ImageResponse:
+    async def analyze_image(self, metadata: ImageMetadata, image: Path = None) -> ImageResponse:
         return await self.llava.analyze_image(metadata, image)
 
     
     @bentoml.api(route="/llava/image-file")
-    async def analyze_image_file(self, metadata: ImageRequestMetadata, image: Path) -> ImageResponse:
+    async def analyze_image_file(self, metadata: ImageMetadata, image: Path) -> ImageResponse:
         return await self.llava.analyze_image_file(metadata, image)
 
     

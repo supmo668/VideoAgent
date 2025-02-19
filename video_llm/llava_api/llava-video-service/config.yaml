@@ -12,6 +12,7 @@ service:
   traffic:
     timeout: 300
     concurrency: 1
+  load_from_db: true
 
 video:
   max_frames: 16
