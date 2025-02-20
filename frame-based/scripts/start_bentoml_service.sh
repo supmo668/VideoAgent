@@ -1,1 +1,1 @@
-bentoml serve app:VideoAnalyzerService  --port 8000
+bentoml serve app:VideoFrameEmbedQA --port 8080
