@@ -18,7 +18,9 @@ class PromptLibrary:
         try:
             conn_uri = os.getenv("DATABASE_CONN_URI")
             if conn_uri:
-                self.conn = psycopg2.connect(conn_uri)
+                self.conn = psycopg2.connect(conn_uri, sslmode='require')
+                self.conn.autocommit = True
+            print("Connected to Prompt Library database successfully.")
         except Exception as e:
             print(f"Warning: Failed to initialize PromptLibrary: {str(e)}")
 
