@@ -6,8 +6,10 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 from langsmith import traceable
+from logging_config import get_logger
 
 load_dotenv()
+logger = get_logger()
 
 class PromptLibrary:
     """Manager for storing and retrieving prompts from database."""
@@ -20,15 +22,14 @@ class PromptLibrary:
             if conn_uri:
                 self.conn = psycopg2.connect(conn_uri, sslmode='require')
                 self.conn.autocommit = True
-            print("Connected to Prompt Library database successfully.")
+            logger.info("Connected to Prompt Library database successfully.")
         except Exception as e:
-            print(f"Warning: Failed to initialize PromptLibrary: {str(e)}")
+            logger.warning(f"Failed to initialize PromptLibrary: {str(e)}")
 
     @traceable(run_type="chain")
     async def get_prompt(self, name: str) -> str:
         """
-        Fetch the "prompt" field by name from the database.
-        If multiple prompts exist with the same name, default to the one in the "schema" category.
+        Fetch the prompt content from the prompts table by name, filtering for format_instruction type.
 
         Args:
             name: The unique name of the prompt to fetch
@@ -37,25 +38,37 @@ class PromptLibrary:
             The prompt text if found, empty string otherwise
         """
         if not self.conn:
+            logger.warning("Database connection not available")
             return ""
         
-        with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Fetch all prompts with the given name
-            cur.execute("SELECT * FROM prompts WHERE name = %s", (name,))
-            results = cur.fetchall()
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                query = """
+                    SELECT prompt 
+                    FROM prompts 
+                    WHERE name = %s 
+                    AND type = 'format_instruction'
+                """
+                logger.debug(f"Executing query: {query} with params: ({name},)")
+                cur.execute(query, (name,))
+                result = cur.fetchone()
 
-            if not results:
-                return ""
+                if not result:
+                    logger.warning(f"No prompt found with name '{name}' and type 'format_instruction'")
+                    return ""
 
-            # Default to "schema" category if multiple results exist
-            selected_prompt = next((row for row in results if row.get("category") == "schema"), results[0])
-
-            return selected_prompt.get("prompt", "")
+                prompt = result["prompt"]
+                logger.info(f"Successfully retrieved prompt: {prompt[:50]}...")
+                return prompt
+                
+        except Exception as e:
+            logger.error(f"Error fetching prompt from database: {str(e)}")
+            return ""
 
     @traceable(run_type="chain")
     async def list_prompts(self, category: str = None):
         """
-        List all available prompts, optionally filtered by category.
+        List all available format_instruction prompts, optionally filtered by category.
 
         Args:
             category: Optional category to filter prompts
@@ -64,21 +77,24 @@ class PromptLibrary:
             List of prompt names
         """
         if not self.conn:
+            logger.warning("Database connection not available")
             return []
             
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
-                query = "SELECT name FROM prompts"
+                query = "SELECT name FROM prompts WHERE type = 'format_instruction'"
                 params = ()
                 
                 if category:
-                    query += " WHERE category = %s"
+                    query += " AND category = %s"
                     params = (category,)
 
                 cur.execute(query, params)
-                return [row["name"] for row in cur.fetchall()]
+                prompts = [row["name"] for row in cur.fetchall()]
+                logger.info(f"Found {len(prompts)} format_instruction prompts")
+                return prompts
         except Exception as e:
-            print(f"Error listing prompts: {str(e)}")
+            logger.error(f"Error listing prompts: {str(e)}")
             return []
 
     def __del__(self):

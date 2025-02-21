@@ -153,12 +153,13 @@ def main(
         
         question = DEFAULT_IMAGE_TOKEN + f"\n{time_instruction}\n{prompt}"
         conv = copy.deepcopy(conv_templates[conv_template])
-        conv.append_message(
-            conv.roles[0], question)
+        conv.append_message(conv.roles[0], question)
         conv.append_message(conv.roles[1], None)
+        
         prompt = conv.get_prompt()
         
         print("Generating response...")
+        print(f"Using question: {question}\nPrompt: {prompt}\n")
         input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors='pt').unsqueeze(0)
         input_ids = input_ids.to(device)
         

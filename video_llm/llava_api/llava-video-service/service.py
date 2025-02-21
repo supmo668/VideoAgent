@@ -58,21 +58,20 @@ tracing_config = TracingConfig()
 tracing_config.enable_tracing()
 
 # Model request/response classes
-class ImageMetadata(BaseModel):
-    """Metadata for image analysis."""
+class ImageRequestMetadata(BaseModel):
+    image_url: Optional[str] = Field(None, description="URL of the image to analyze")
     prompt: str = Field(DEFAULTS["image"]["prompt"], description="Prompt name or text for image analysis")
     temperature: float = Field(DEFAULTS["image"]["temperature"], description="Temperature for generation")
     max_new_tokens: int = Field(DEFAULTS["image"]["max_new_tokens"], description="Maximum number of new tokens to generate")
-    load_from_db: bool = Field(SERVICE_CONFIG.get("load_from_db", True), description="Whether to load prompt from database")
+    load_from_db: bool = Field(False, description="Whether to load prompt from database")
 
-class VideoMetadata(BaseModel):
-    """Metadata for video analysis."""
+class VideoRequestMetadata(BaseModel):
     video_url: Optional[str] = Field(None, description="URL of the video to analyze")
     prompt: str = Field(DEFAULTS["video"]["prompt"], description="Prompt name or text for video analysis")
     temperature: float = Field(DEFAULTS["video"]["temperature"], description="Temperature for generation")
     max_new_tokens: int = Field(DEFAULTS["video"]["max_new_tokens"], description="Maximum number of new tokens to generate")
     fps: int = Field(DEFAULTS["video"]["fps"], description="Frames per second to extract")
-    load_from_db: bool = Field(SERVICE_CONFIG.get("load_from_db", True), description="Whether to load prompt from database")
+    load_from_db: bool = Field(False, description="Whether to load prompt from database")
 
 class ImageResponse(BaseModel):
     response: Optional[str] = Field(None, description="Generated response")
@@ -85,11 +84,11 @@ class VideoResponse(BaseModel):
     error: Optional[str] = Field(None, description="Error message if any")
 
 class LlavaVideoRequest(BaseModel):
-    metadata: VideoMetadata = Field(..., description="Metadata for the video llava workflow")
+    metadata: VideoRequestMetadata = Field(..., description="Metadata for the video llava workflow")
     video: Optional[Path] = Field(None, description="Video file")
 
 class LlavaImageRequest(BaseModel):
-    metadata: ImageMetadata = Field(..., description="Metadata for the image llava workflow")
+    metadata: ImageRequestMetadata = Field(..., description="Metadata for the image llava workflow")
     image: Optional[Path] = Field(None, description="Image file")
 
 class TwelveLabsRequest(BaseModel):
@@ -130,23 +129,8 @@ class LLaVAVideoService:
         # Set device from config
         self.device = MODEL_CONFIG["device"]
         
-        # Load environment variables from .env file
-        load_dotenv()
-        
-        # Get database connection string from environment
-        self.DATABASE_CONN_URI = os.getenv('DATABASE_CONN_URI')
-        
-        # Initialize database connection if needed
-        self.load_from_db = SERVICE_CONFIG.get("load_from_db", True)
-        if self.load_from_db:
-            if not self.DATABASE_CONN_URI:
-                raise ValueError("DATABASE_CONN_URI environment variable not set")
-            try:
-                self.db_conn = psycopg2.connect(self.DATABASE_CONN_URI)
-                logger.info("Successfully connected to database")
-            except Exception as e:
-                logger.error(f"Error connecting to database: {str(e)}")
-                raise
+        # Initialize prompt library
+        self.prompt_library = PromptLibrary()
         
         # Clear CUDA cache and set environment
         torch.cuda.empty_cache()
@@ -295,57 +279,59 @@ class LLaVAVideoService:
     @log_function_call(skip_args=True)  # Skip args due to potentially large frame data
     async def _generate_response(
         self, 
-        prompt: str, 
         frames: np.ndarray, 
-        metadata: Union[ImageMetadata, VideoMetadata],
-        frame_time: List[float] = None,
-        video_time: float = None
+        metadata: Union[ImageRequestMetadata, VideoRequestMetadata],
+        frame_time: Optional[List[float]] = None,
+        video_time: Optional[float] = None
     ) -> str:
         """Generate response using the model."""
         try:
+            logger.info("Starting response generation")
+            logger.debug(f"Input metadata: {metadata}")
+            
+            if frames is None or len(frames) == 0:
+                raise ValueError("No frames provided for processing")
+                
+            logger.debug(f"Frames shape: {frames.shape}")
+            
             # Process frames in chunks
             processed_frames = self.process_frames_in_chunks(frames)
+            if processed_frames is None:
+                raise ValueError("Failed to process frames")
             
-            # Get image sizes
-            image_sizes = [[frames.shape[1], frames.shape[2]] for _ in range(len(frames))]
-            logger.debug(f"Image size: {image_sizes[0]}. Num images: {len(image_sizes)}")
-            
-            torch.cuda.empty_cache()
-            
-            # Prepare conversation
-            conv_template = "v1"
-            
+            # Get actual prompt from library if enabled in metadata
+            prompt = metadata.prompt
+            if metadata.load_from_db:
+                try:
+                    prompt = await self.prompt_library.get_prompt(metadata.prompt)
+                    if not prompt:
+                        raise ValueError(f"No prompt found with name '{metadata.prompt}'")
+                    logger.info(f"Using prompt from library: {prompt[:50]}...")
+                except Exception as e:
+                    logger.error(str(e))
+                    raise
+                
             # Add time instruction for videos
             if frame_time is not None and video_time is not None:
                 time_instruction = f"The video lasts for {video_time:.2f} seconds, and {len(frames)} frames are uniformly sampled from it. These frames are located at {frame_time}."
-                question = DEFAULT_IMAGE_TOKEN + f"\n{time_instruction}\n{metadata.prompt}"
+                question = DEFAULT_IMAGE_TOKEN + f"\n{time_instruction}\n{prompt}"
+                logger.debug(f"Time instruction added: {time_instruction}")
             else:
-                question = DEFAULT_IMAGE_TOKEN + f"\n{metadata.prompt}"
+                question = DEFAULT_IMAGE_TOKEN + f"\n{prompt}"
             
-            conv = copy.deepcopy(conv_templates[conv_template])
+            logger.debug(f"Final question: {question}")
+            
+            conv = copy.deepcopy(conv_templates["qwen_1_5"])
             conv.append_message(conv.roles[0], question)
             conv.append_message(conv.roles[1], None)
-            prompt = conv.get_prompt()
-            
-            # Get actual prompt from database if enabled in metadata
-            if metadata.load_from_db:
-                try:
-                    actual_prompt = self._get_prompt_from_db(prompt, metadata)
-                    logger.info(f"Using prompt from database: {actual_prompt}")
-                except ValueError as e:
-                    logger.error(str(e))
-                    raise
-            else:
-                actual_prompt = prompt
-
-            logger.debug("Generating response...")
+            conv_prompt = conv.get_prompt()
+                        
             input_ids = tokenizer_image_token(
-                actual_prompt, 
+                conv_prompt, 
                 self.tokenizer, 
                 IMAGE_TOKEN_INDEX, 
                 return_tensors='pt'
-            ).unsqueeze(0)
-            input_ids = input_ids.to(self.device)
+            ).unsqueeze(0).to(self.device)
             
             # Create attention mask
             attention_mask = torch.ones_like(input_ids)
@@ -355,43 +341,20 @@ class LLaVAVideoService:
                 output_ids = self.model.generate(
                     input_ids,
                     images=[processed_frames],
-                    # image_sizes=image_sizes,
                     attention_mask=attention_mask,
-                    modalities=["video"],
-                    do_sample=False,
+                    modalities=["video" if frame_time is not None else "image"],
+                    do_sample=True if metadata.temperature > 0 else False,
                     temperature=metadata.temperature,
                     max_new_tokens=metadata.max_new_tokens,
-                    use_cache=True,
                 )
             
             outputs = self.tokenizer.decode(output_ids[0, input_ids.shape[1]:]).strip()
             torch.cuda.empty_cache()
             
-            return outputs.strip()
+            return outputs
             
         except Exception as e:
-            logger.error(f"Error generating response: {str(e)}")
-            raise
-
-    def _get_prompt_from_db(self, prompt_name: str, metadata: Union[ImageMetadata, VideoMetadata]) -> str:
-        """Get prompt from database by name if load_from_db is enabled in metadata."""
-        if not metadata.load_from_db:
-            return prompt_name
-            
-        try:
-            with self.db_conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(
-                    "SELECT prompt FROM prompts WHERE name = %s AND type = 'format_instructions'",
-                    (prompt_name,)
-                )
-                result = cur.fetchone()
-                
-                if not result:
-                    raise ValueError(f"No prompt found with name '{prompt_name}' and type 'format_instructions'")
-                    
-                return result['prompt']
-        except Exception as e:
-            logger.error(f"Error fetching prompt from database: {str(e)}")
+            logger.error(f"Error generating response: {str(e)}", exc_info=True)
             raise
 
     @log_function_call()
@@ -422,7 +385,7 @@ class LLaVAVideoService:
 
     @bentoml.api
     @log_function_call()
-    async def analyze_video_file(self, metadata: VideoMetadata, video: Path) -> VideoResponse:
+    async def analyze_video_file(self, metadata: VideoRequestMetadata, video: Path) -> VideoResponse:
         """Analyze a video file."""
         try:
             # Process video with same settings as LLaVA-Video-7B-Qwen2.py
@@ -433,7 +396,6 @@ class LLaVAVideoService:
             
             # Generate response with exact same parameters
             response = await self._generate_response(
-                metadata.prompt,
                 frames,
                 metadata,
                 frame_time=frame_time,
@@ -453,7 +415,7 @@ class LLaVAVideoService:
 
     @bentoml.api
     @log_function_call()
-    async def analyze_video(self, metadata: VideoMetadata) -> VideoResponse:
+    async def analyze_video(self, metadata: VideoRequestMetadata) -> VideoResponse:
         """Analyze a video from URL."""
         try:
             if not metadata.video_url:
@@ -464,7 +426,6 @@ class LLaVAVideoService:
             
             # Generate response
             response = await self._generate_response(
-                metadata.prompt,
                 frames,
                 metadata,
                 frame_time=frame_time,
@@ -485,12 +446,12 @@ class LLaVAVideoService:
 
     @bentoml.api
     @log_function_call()
-    async def analyze_image_file(self, metadata: ImageMetadata, image: Path) -> ImageResponse:
+    async def analyze_image_file(self, metadata: ImageRequestMetadata, image: Path) -> ImageResponse:
         """Analyze a single image from a file."""
         try:
             logger.info(f"Processing image file: {image}")
             frames, frame_time, video_time = await self._process_image(image, is_bytes=False)
-            response = await self._generate_response(metadata.prompt, frames, metadata)
+            response = await self._generate_response(metadata, frames)
             return ImageResponse(response=response)
         except Exception as e:
             logger.error(f"Error analyzing image file: {str(e)}")
@@ -501,7 +462,7 @@ class LLaVAVideoService:
 
     @bentoml.api
     @log_function_call()
-    async def analyze_image(self, metadata: ImageMetadata, image: Path = None) -> ImageResponse:
+    async def analyze_image(self, metadata: ImageRequestMetadata, image: Path = None) -> ImageResponse:
         """Analyze a single image from URL."""
         try:
             if metadata.image_url:
@@ -691,22 +652,22 @@ class LabARVideoReportingService:
 
     
     @bentoml.api(route="/llava/video")
-    async def analyze_video(self, metadata: VideoMetadata, video: Path = None) -> VideoResponse:
+    async def analyze_video(self, metadata: VideoRequestMetadata, video: Path = None) -> VideoResponse:
         return await self.llava.analyze_video(metadata)
 
     
     @bentoml.api(route="/llava/video-file")
-    async def analyze_video_file(self, metadata: VideoMetadata, video: Path) -> VideoResponse:
+    async def analyze_video_file(self, metadata: VideoRequestMetadata, video: Path) -> VideoResponse:
         return await self.llava.analyze_video_file(metadata, video)
 
     
     @bentoml.api(route="/llava/image")
-    async def analyze_image(self, metadata: ImageMetadata, image: Path = None) -> ImageResponse:
+    async def analyze_image(self, metadata: ImageRequestMetadata, image: Path = None) -> ImageResponse:
         return await self.llava.analyze_image(metadata, image)
 
     
     @bentoml.api(route="/llava/image-file")
-    async def analyze_image_file(self, metadata: ImageMetadata, image: Path) -> ImageResponse:
+    async def analyze_image_file(self, metadata: ImageRequestMetadata, image: Path) -> ImageResponse:
         return await self.llava.analyze_image_file(metadata, image)
 
     
