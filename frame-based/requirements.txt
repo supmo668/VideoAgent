@@ -23,3 +23,4 @@ reportlab>=4.0.0
 langchain-openai>=0.0.1
 langgraph>=0.2.70
 langchain-core[tracers]>=0.1.0
+salesforce-lavis>=0.1.0

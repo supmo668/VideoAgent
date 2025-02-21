@@ -8,24 +8,25 @@ from datetime import datetime
 from tqdm import tqdm
 import yaml
 from typing import List, Dict, Tuple, Optional, Any, Union
-
-import openai
 from urllib.request import urlretrieve
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Image
 from reportlab.lib.styles import getSampleStyleSheet
 
 from utils import load_config, setup_processing_environment, cleanup_environment
-from db_utils import init_cache_db, get_cached_embedding, save_embedding_to_cache
+# from db_utils import init_cache_db, get_cached_embedding, save_embedding_to_cache
 from video_utils import extract_frames
-from embed_utils import cosine_similarity, get_text_embedding_openai, get_frame_description
+
 from embedding_utils import (
-    OpenAIEmbeddingProcessor,
-    ClipEmbeddingProcessor,
+    MultimodalEmbedder,
+    ModelType,
+    MultimodalProcessor,
     process_frames_for_comparison,
     save_and_report_results,
 )
 from summarization_utils import app, summarize_and_generate_title_async
-from models import VideoAnalysisRequest, VideoAnalysisResponse
+from models import (
+    ProcessingResults
+)
 from dotenv import load_dotenv
 from s3 import S3Module
 
@@ -118,7 +119,7 @@ async def process_and_summarize_video(
             shutil.rmtree(temp_dir)
             
 def process_video_with_processor(
-    processor: Union[ClipEmbeddingProcessor, OpenAIEmbeddingProcessor],
+    processor: MultimodalProcessor,
     frames: List[Tuple[int, str]],
     user_descs: List[str],
     cfg: Dict[str, Any],
@@ -330,40 +331,65 @@ def process_video_clip_core(
     cache_db_path: str = "embeddings_cache.db",
     keep_temp_dir: bool = True,
     record_top_k_frames: int = 20,
-    generate_report: bool = True
-) -> Optional[Dict[str, str]]:
-    """Core function to process video using CLIP embedding model."""
-    cfg = load_config(config_path)
+    generate_report: bool = True,
+    model_type: Union[ModelType, str] = ModelType.CLIP
+) -> Dict[str, Any]:
+    """
+    Process video using multimodal embedding model.
+    
+    Args:
+        video_path (str): Path to the video file
+        user_descs (List[str]): List of descriptions to match against frames
+        fps (float, optional): Frames per second to process. Defaults to 2.0.
+        config_path (str, optional): Path to config file. Defaults to "config.yaml".
+        cache_db_path (str, optional): Path to cache database. Defaults to "embeddings_cache.db".
+        keep_temp_dir (bool, optional): Whether to keep temporary directory. Defaults to True.
+        record_top_k_frames (int, optional): Number of top matching frames to record. Defaults to 20.
+        generate_report (bool, optional): Whether to generate a report. Defaults to True.
+        model_type (Union[ModelType, str], optional): Model type to use. Defaults to ModelType.CLIP.
+    
+    Returns:
+        Dict[str, Any]: Dictionary containing results and paths to generated files
+    """
+    temp_dir, result_dir = setup_processing_environment(video_path, cache_db_path, keep_temp_dir)
+    
     try:
-        request = VideoAnalysisRequest(
-            video_path=video_path,
-            user_descs=user_descs,
-            model_type="clip",
-            fps=fps,
-            record_top_k_frames=record_top_k_frames,
-            generate_report=generate_report
+        # Load configuration
+        cfg = load_config(config_path)
+        
+        # Extract frames
+        frames = extract_frames(video_path, temp_dir, fps)
+        
+        # Initialize embedder
+        embedder = MultimodalEmbedder(model_type)
+        
+        # Process frames and descriptions
+        frame_embeddings = []
+        for _, frame_path in tqdm(frames, desc="Processing frames"):
+            embedding = embedder.get_frame_embedding(frame_path)
+            frame_embeddings.append(embedding)
+        
+        desc_embeddings = []
+        for desc in tqdm(user_descs, desc="Processing descriptions"):
+            embedding = embedder.get_text_embedding(desc)
+            desc_embeddings.append(embedding)
+        
+        # Process results and generate report
+        results = process_frames_for_comparison(
+            frames, frame_embeddings, user_descs, desc_embeddings,
+            record_top_k_frames
         )
         
-        temp_dir, result_dir = setup_processing_environment(
-            request.video_path, cache_db_path, keep_temp_dir, suffix="_clip")
-        frames: List[Tuple[int, str]] = extract_frames(request.video_path, temp_dir, request.fps)
-        processor = ClipEmbeddingProcessor(cache_db_path)
-
-        results: Optional[Dict[str, str]] = process_video_with_processor(
-            processor=processor,
-            frames=frames,
-            user_descs=request.user_descs,
-            cfg=cfg,
-            result_dir=result_dir,
-            record_top_k_frames=request.record_top_k_frames,
-            model_type=request.model_type,
-            generate_report=request.generate_report
-        )
-        if results:
-            print(f"Reports saved to {results['local_html']} and {results['local_pdf']}.")
+        if generate_report:
+            report_path = save_and_report_results(results, result_dir)
+            results["report_path"] = report_path
+        
         return results
-    finally:
-        cleanup_environment(temp_dir, keep_temp_dir)
+    
+    except Exception as e:
+        if not keep_temp_dir:
+            cleanup_environment(temp_dir)
+        raise e
 
 def process_video_openai_core(
     video_path: str,
@@ -451,7 +477,7 @@ def process_video_openai_core(
         if not keep_temp_dir:
             cleanup_environment(temp_dir, keep_temp_dir)
 
-def process_video_clip_core(
+def process_video_with_multimodal(
     video_path: str,
     user_descs: List[str],
     fps: float = 2.0,
@@ -459,188 +485,174 @@ def process_video_clip_core(
     cache_db_path: str = "embeddings_cache.db",
     keep_temp_dir: bool = True,
     record_top_k_frames: int = 20,
-    generate_report: bool = True
-) -> Dict[str, Any]:
-    """Process video using CLIP embedding model.
+    generate_report: bool = True,
+    model_type: Union[ModelType, str] = ModelType.COMBINED,
+) -> ProcessingResults:
+    """
+    Process video using multimodal embedding model to identify action segments.
     
     Args:
-        video_path (str): Path to the video file
-        user_descs (List[str]): List of descriptions to match against frames
-        fps (float, optional): Frames per second to process. Defaults to 2.0.
-        config_path (str, optional): Path to config file. Defaults to "config.yaml".
-        cache_db_path (str, optional): Path to cache database. Defaults to "embeddings_cache.db".
-        keep_temp_dir (bool, optional): Whether to keep temporary directory. Defaults to True.
-        record_top_k_frames (int, optional): Number of top matching frames to record. Defaults to 20.
-        generate_report (bool, optional): Whether to generate a report. Defaults to True.
+        video_path: Path to the video file
+        user_descs: List of action descriptions to identify
+        fps: Frames per second to process
+        config_path: Path to config file
+        cache_db_path: Path to cache database
+        keep_temp_dir: Whether to keep temporary directory
+        record_top_k_frames: Number of top matching frames to record
+        generate_report: Whether to generate a report
+        model_type: Type of model to use (CLIP, BLIP, or COMBINED)
     
     Returns:
-        Dict[str, Any]: Dictionary containing results and paths to generated files
+        Dictionary containing results and timing information
     """
-    cfg = load_config(config_path)
+    temp_dir, result_dir = setup_processing_environment(video_path, cache_db_path, keep_temp_dir)
+    
     try:
-        request = VideoAnalysisRequest(
-            video_path=video_path,
-            user_descs=user_descs,
-            model_type="clip",
-            fps=fps,
-            record_top_k_frames=record_top_k_frames,
-            generate_report=generate_report
-        )
+        # Load configuration
+        cfg = load_config(config_path)
         
-        temp_dir, result_dir = setup_processing_environment(
-            request.video_path, cache_db_path, keep_temp_dir, suffix="_clip")
-        frames: List[Tuple[int, str]] = extract_frames(request.video_path, temp_dir, request.fps)
-        processor = ClipEmbeddingProcessor(cache_db_path)
-
-        results = process_video_with_processor(
-            processor=processor,
+        # Extract frames
+        frames = extract_frames(video_path, temp_dir, fps)
+        
+        # Initialize processor
+        processor = MultimodalProcessor(cache_db_path, model_type)
+        
+        # Process frames
+        frame_embeddings = []
+        for _, frame_path in tqdm(frames, desc="Processing frames"):
+            embedding = processor.get_frame_embedding(frame_path)
+            frame_embeddings.append(embedding)
+        
+        # Process descriptions
+        desc_embeddings = []
+        for desc in tqdm(user_descs, desc="Processing descriptions"):
+            embedding = processor.get_text_embedding(desc)
+            desc_embeddings.append(embedding)
+        
+        # Find action segments and process results
+        results: ProcessingResults = process_frames_for_comparison(
             frames=frames,
-            user_descs=request.user_descs,
-            cfg=cfg,
-            result_dir=result_dir,
-            record_top_k_frames=request.record_top_k_frames,
-            model_type=request.model_type,
-            generate_report=request.generate_report
+            frame_embeddings=frame_embeddings,
+            user_descs=user_descs,
+            desc_embeddings=desc_embeddings,
         )
-
-        if not results:
-            raise ValueError("No results returned from video processing")
-
-        # Initialize S3 processor
-        s3_processor = S3Processor()
         
-        # Upload reports to S3
-        s3_markdown = s3_processor._upload_to_s3(results['markdown'], f"reports/{Path(results['markdown']).name}")
-        s3_html = s3_processor._upload_to_s3(results['html'], f"reports/{Path(results['html']).name}")
-        s3_pdf = s3_processor._upload_to_s3(results['pdf'], f"reports/{Path(results['pdf']).name}")
-
-        # Upload frames to S3 and get their URLs
-        key_frames = {}
-        frame_descriptions = {}
-        for desc in user_descs:
-            desc_frames_dir = Path(result_dir) / desc.replace(" ", "_")
-            if desc_frames_dir.exists():
-                frame_urls = []
-                for frame_file in desc_frames_dir.glob("*.jpg"):
-                    s3_key = f"frames/{desc.replace(' ', '_')}/{frame_file.name}"
-                    frame_urls.append(s3_processor._upload_to_s3(str(frame_file), s3_key))
-                key_frames[desc] = frame_urls
-                
-                # Get frame descriptions if available
-                desc_file = desc_frames_dir / "descriptions.json"
-                if desc_file.exists():
-                    with open(desc_file, 'r') as f:
-                        frame_descriptions[desc] = json.load(f)
-                else:
-                    frame_descriptions[desc] = None
-
-        return {
-            "local_markdown": results['markdown'],
-            "local_html": results['html'],
-            "local_pdf": results['pdf'],
-            "s3_markdown": s3_markdown,
-            "s3_html": s3_html,
-            "s3_pdf": s3_pdf,
-            "key_frames": key_frames,
-            "frame_descriptions": frame_descriptions,
-            "result_dir": str(result_dir),
-            "frames_dir": str(temp_dir)
-        }
-    finally:
+        if generate_report:
+            results.report_dir = save_and_report_results(results, result_dir)
+        
+        return results
+    
+    except Exception as e:
         if not keep_temp_dir:
-            cleanup_environment(temp_dir, keep_temp_dir)
+            cleanup_environment(temp_dir)
+        raise e
+
+def process_video_api(
+    video_path: str,
+    descriptions: List[str],
+    fps: float = 2.0,
+    config_path: str = "config.yaml",
+    cache_db_path: str = "embeddings_cache.db",
+    keep_temp_dir: bool = True,
+    record_top_k_frames: int = 20,
+    generate_report: bool = True,
+    model_type: str = "combined"
+) -> ProcessingResults:
+    """Process video and identify action segments - API version."""
+    try:
+        results = process_video_with_multimodal(
+            video_path=video_path,
+            user_descs=descriptions,
+            fps=fps,
+            config_path=config_path,
+            cache_db_path=cache_db_path,
+            keep_temp_dir=keep_temp_dir,
+            record_top_k_frames=record_top_k_frames,
+            generate_report=generate_report,
+            model_type=model_type
+        )
+        return results
+    except Exception as e:
+        print(f"Error processing video: {e}")
+        raise
 
 @click.group()
 def cli():
     pass
 
-@cli.command(name="clip-embed")
-@click.option("--video_path", required=True, help="Path to input video file")
-@click.option("--descriptions", required=True, multiple=True, help="List of descriptions to search for")
-@click.option("--fps", type=int, default=30, help="Target frames per second for extraction")
-@click.option("--config_path", default="config.yaml", help="Path to config file")
-@click.option("--cache_db_path", default="embeddings_cache.db", help="Path to embeddings cache database")
-@click.option("--keep-temp-dir", is_flag=True, help="Keep temporary directory after processing")
-@click.option("--record-top-k-frames", default=20, help="Number of top frames to record")
-@click.option("--generate-report", is_flag=True, help="Generate report with results")
-def process_video_clip(
-    video_path, descriptions, fps, config_path,
-    cache_db_path, keep_temp_dir,
-    record_top_k_frames, generate_report
-):
-    """Process video using CLIP embedding model."""
-    process_video_clip_core(
-        video_path=video_path,
-        user_descs=descriptions,
-        fps=fps,
-        config_path=config_path,
-        cache_db_path=cache_db_path,
-        keep_temp_dir=keep_temp_dir,
-        record_top_k_frames=record_top_k_frames,
-        generate_report=generate_report
-    )
-
-@cli.command(name="openai-embed")
-@click.option("--video_path", required=True, help="Path to input video file")
-@click.option("--descriptions", required=True, multiple=True, help="List of descriptions to search for")
-@click.option("--fps", type=int, default=30, help="Target frames per second for extraction")
-@click.option("--config_path", default="config.yaml", help="Path to config file")
-@click.option("--cache_db_path", default="embeddings_cache.db", help="Path to embeddings cache database")
-@click.option("--keep-temp-dir", is_flag=True, help="Keep temporary directory after processing")
-@click.option("--record-top-k-frames", default=20, help="Number of top frames to record")
-@click.option("--generate-report", is_flag=True, help="Generate report with results")
-def process_video_openai(
-    video_path, descriptions, fps, config_path,
-    cache_db_path, keep_temp_dir,
-    record_top_k_frames, generate_report
-):
-    """Process video using OpenAI embedding model."""
-    process_video_openai_core(
-        video_path=video_path,
-        user_descs=descriptions,
-        fps=fps,
-        config_path=config_path,
-        cache_db_path=cache_db_path,
-        keep_temp_dir=keep_temp_dir,
-        record_top_k_frames=record_top_k_frames,
-        generate_report=generate_report
-    )
-
-@cli.command(name="summarize")
-@click.option("--video_path", required=True, help="Path to input video file")
-@click.option("--fps", type=float, default=30, help="Target frames per second for extraction")
-@click.option("--keep-temp-dir", is_flag=False, help="Keep temporary directory after processing")
-@click.option("--config_path", default="config.yaml", help="Path to config file")
-@click.option("--cache_db_path", default="embeddings_cache.db", help="Path to embeddings cache database")
-def summarize_video(
+@cli.command()
+@click.option('--video_path', required=True, help='Path to the video file')
+@click.option('--descriptions', required=True, multiple=True, help='Action descriptions to identify')
+@click.option('--fps', default=2.0, help='Frames per second to process')
+@click.option('--config_path', default="config.yaml", help='Path to config file')
+@click.option('--cache_db_path', default="embeddings_cache.db", help='Path to cache database')
+@click.option('--keep-temp-dir', is_flag=True, help='Keep temporary directory')
+@click.option('--record-top-k-frames', default=20, help='Number of top matching frames to record')
+@click.option('--generate-report', is_flag=True, help='Generate a report')
+@click.option('--model-type', type=click.Choice(['clip', 'blip', 'combined']), default='combined', help='Model type to use')
+def process_video(
     video_path: str,
+    descriptions: List[str],
     fps: float,
-    keep_temp_dir: bool,
     config_path: str,
-    cache_db_path: str
-):
-    """Process video and generate summary."""
-    import asyncio
-    async def run():
-        result = await process_and_summarize_video(
-            video_path=video_path,
-            fps=fps,
-            config_path=config_path,
-            cache_db_path=cache_db_path
-        )
-        if result:
-            click.echo(f"Title: {result['title']}")
-            click.echo(f"Summary: {result['summary']}")
-        else:
-            click.echo("Video processing failed.")
-    asyncio.run(run())
-    
+    cache_db_path: str,
+    keep_temp_dir: bool,
+    record_top_k_frames: int,
+    generate_report: bool,
+    model_type: str,
+) -> ProcessingResults:
+    """Process video and identify action segments - CLI version."""
+    return process_video_api(
+        video_path=video_path,
+        descriptions=descriptions,
+        fps=fps,
+        config_path=config_path,
+        cache_db_path=cache_db_path,
+        keep_temp_dir=keep_temp_dir,
+        record_top_k_frames=record_top_k_frames,
+        generate_report=generate_report,
+        model_type=model_type
+    )
+
 if __name__ == "__main__":
     cli()
-    # run openai with
-    # python main.py openai-embed --video_path https://myimagebucketlabar.s3.us-east-2.amazonaws.com/V1_end.mp4 --descriptions "Pouring water into red cabbage filled beaker" --descriptions "Turning on heat plate" --descriptions "Putting red cabbage solution into test tube (first time)" --descriptions "Putting red cabbage solution into test tube (second time)" --generate-report
-    # python main.py openai-embed --video_path ../data/V1_end.mp4 --descriptions "Pouring water into red cabbage filled beaker" --descriptions "Turning on heat plate" --descriptions "Putting red cabbage solution into test tube (first time)" --descriptions "Putting red cabbage solution into test tube (second time)"
-    # run clip with
-    # python main.py clip-embed --video_path https://myimagebucketlabar.s3.us-east-2.amazonaws.com/V1_end.mp4 --descriptions "Pouring water into red cabbage filled beaker" --descriptions "Turning on heat plate" --descriptions "Putting red cabbage solution into test tube (first time)" --descriptions "Putting red cabbage solution into test tube (second time)" --generate-report
-    # summarize
-    # python main.py summarize --video_path https://myimagebucketlabar.s3.us-east-2.amazonaws.com/V1_end.mp4
+    # Example CLI commands:
+    
+    # 1. Process video with combined CLIP+BLIP model (default)
+    # python main.py process-video \
+    #   --video_path https://myimagebucketlabar.s3.us-east-2.amazonaws.com/V1_end.mp4 \
+    #   --descriptions "Pouring water into red cabbage filled beaker" \
+    #   --descriptions "Turning on heat plate" \
+    #   --descriptions "Putting red cabbage solution into test tube (first time)" \
+    #   --descriptions "Putting red cabbage solution into test tube (second time)" \
+    #   --fps 2.0 \
+    #   --generate-report \
+    #   --min-segment-length 3
+    
+    # 2. Use only CLIP model with custom parameters
+    # python main.py process-video \
+    #   --video_path ../data/V1_end.mp4 \
+    #   --descriptions "Pouring water into red cabbage filled beaker" \
+    #   --descriptions "Turning on heat plate" \
+    #   --model-type clip \
+    #   --fps 5.0 \
+    #   --min-segment-length 5 \
+    #   --record-top-k-frames 30 \
+    #   --generate-report
+    
+    # 3. Use only BLIP model with default parameters
+    # python main.py process-video \
+    #   --video_path https://myimagebucketlabar.s3.us-east-2.amazonaws.com/V1_end.mp4 \
+    #   --descriptions "Pouring water into beaker" \
+    #   --model-type blip \
+    #   --generate-report
+    
+    # 4. Process local video with custom cache and config paths
+    # python main.py process-video \
+    #   --video_path ../data/experiment.mp4 \
+    #   --descriptions "Mixing chemicals" \
+    #   --descriptions "Heating solution" \
+    #   --config_path ../config/custom_config.yaml \
+    #   --cache_db_path ../cache/embeddings.db \
+    #   --keep-temp-dir \
+    #   --generate-report

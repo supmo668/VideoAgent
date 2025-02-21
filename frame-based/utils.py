@@ -56,7 +56,7 @@ def setup_processing_environment(
     return temp_dir, result_dir
 
 
-def cleanup_environment(temp_dir, keep_temp_dir):
+def cleanup_environment(temp_dir, keep_temp_dir=False):
     """Clean up temporary directory if needed."""
     if not keep_temp_dir:
         shutil.rmtree(temp_dir)
